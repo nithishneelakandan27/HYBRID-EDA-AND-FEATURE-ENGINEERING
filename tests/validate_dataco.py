@@ -7,6 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 from profiling.profiler import DatasetProfiler
 from data_processing.ingestion import DatasetIngestionService
+from decision_engine.engine import HybridDecisionEngine
 
 DATACO_EXPECTED_PROPERTIES = {
     "num_rows": 180519,
@@ -30,11 +31,13 @@ def validate_dataco_dataframe(df: pd.DataFrame) -> dict:
     profiles = DatasetProfiler.generate_column_profiles(df)
     target_prof = DatasetProfiler.generate_target_profile(df)
     leakage = DatasetProfiler.detect_leakage(df)
+    decision_plan = HybridDecisionEngine.generate_plan(df)
 
     validation_results = {
         "summary": summary,
         "is_exact_dataco": False,
-        "checks": {}
+        "checks": {},
+        "decision_summary": decision_plan["summary_counts"]
     }
 
     # Verify rows & columns
@@ -66,9 +69,8 @@ def validate_dataco_dataframe(df: pd.DataFrame) -> dict:
 
 def test_dataco_synthetic_schema_validation():
     """
-    Test profiling logic on a synthetic representation of the DataCo schema.
+    Test profiling & decision logic on a synthetic representation of the DataCo schema.
     """
-    # Create 10-row synthetic test frame mirroring DataCo key column names and types
     data = {
         "Type": ["DEBIT"] * 10,
         "Days for shipping (real)": [3, 5, 2, 4, 6, 3, 5, 2, 4, 6],
@@ -88,8 +90,23 @@ def test_dataco_synthetic_schema_validation():
     results = validate_dataco_dataframe(df)
     assert results["summary"]["num_rows"] == 10
     assert results["summary"]["num_cols"] == 13
-    assert len(results["summary"]) > 0
     assert results["checks"]["duplicates_zero"] is True
+
+    # Validate decision engine behavior on DataCo synthetic
+    plan = HybridDecisionEngine.generate_plan(df)
+    cols = {c["column_name"]: c for c in plan["columns"]}
+    
+    # 100% missing product description excluded
+    assert cols["Product Description"]["status"] == "completely_missing"
+    assert cols["Product Description"]["is_usable"] is False
+
+    # Delivery Status is identified as leakage candidate
+    assert cols["Delivery Status"]["status"] == "leakage_candidate"
+    assert cols["Delivery Status"]["is_usable"] is False
+
+    # Customer Lname has missing values -> most frequent imputation
+    lname_imp = next(d for d in cols["Customer Lname"]["decisions"] if d["step"] == "imputation")
+    assert lname_imp["operation"] == "most_frequent_imputation"
 
 if __name__ == "__main__":
     import sys

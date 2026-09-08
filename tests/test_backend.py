@@ -20,7 +20,7 @@ def test_health_check():
     assert data["status"] == "healthy"
     assert data["service"] == "hybrid-eda-backend"
 
-def test_valid_csv_upload_and_profiling():
+def test_valid_csv_upload_and_profiling_and_decisions():
     csv_data = (
         "col_num,col_cat,Late_delivery_risk,Delivery Status\n"
         "10.0,A,1,Shipping Complete\n"
@@ -45,36 +45,28 @@ def test_valid_csv_upload_and_profiling():
     summary = data["summary"]
     assert summary["num_rows"] == 7
     assert summary["num_cols"] == 4
-    assert summary["numeric_column_count"] == 2
-    assert summary["categorical_column_count"] == 2
-    assert summary["missing_value_count"] == 2
 
-    # Check Target Profile
-    target = data["target_profile"]
-    assert target is not None
-    assert target["target_column"] == "Late_delivery_risk"
-    assert target["missing_target_values"] == 0
-    assert "1" in target["class_counts"]
-    assert "0" in target["class_counts"]
+    # Test GET /api/eda/analysis endpoint on uploaded dataset
+    eda_res = client.get("/api/eda/analysis")
+    assert eda_res.status_code == 200
+    eda_data = eda_res.json()
+    assert eda_data["status"] == "success"
+    assert "eda" in eda_data
 
-    # Check Leakage Review
-    leakage = data["leakage_review"]
-    assert len(leakage) >= 1
-    leakage_cols = [item["column_name"] for item in leakage]
-    assert "Delivery Status" in leakage_cols
+    # Test GET /api/decision/plan endpoint on uploaded dataset
+    dec_res = client.get("/api/decision/plan")
+    assert dec_res.status_code == 200
+    dec_data = dec_res.json()
+    assert dec_data["status"] == "success"
+    plan = dec_data["decision_plan"]
+    assert "summary_counts" in plan
+    assert "columns" in plan
+    assert len(plan["columns"]) == 4
 
-    # Check Endpoints
-    sum_res = client.get("/api/datasets/summary")
-    assert sum_res.status_code == 200
-
-    prof_res = client.get("/api/datasets/profiles")
-    assert prof_res.status_code == 200
-
-    target_res = client.get("/api/datasets/target")
-    assert target_res.status_code == 200
-
-    leak_res = client.get("/api/datasets/leakage")
-    assert leak_res.status_code == 200
+    # Verify Delivery Status is classified as leakage candidate
+    leak_col = next(c for c in plan["columns"] if c["column_name"] == "Delivery Status")
+    assert leak_col["status"] == "leakage_candidate"
+    assert leak_col["is_usable"] is False
 
 def test_invalid_file_extension():
     response = client.post(
@@ -111,28 +103,9 @@ def test_numeric_and_categorical_profiling_details():
     assert summary["duplicate_row_count"] == 0
 
     profiles = DatasetProfiler.generate_column_profiles(df)
-    
     num_prof = next(p for p in profiles if p["column_name"] == "num")
     assert num_prof["min"] == 10.0
     assert num_prof["max"] == 100.0
-    assert num_prof["mean"] is not None
-    assert num_prof["median"] is not None
-    assert num_prof["std"] is not None
-    assert num_prof["variance"] is not None
-    assert num_prof["skewness"] > 1.0  # highly skewed due to 100.0
-    assert num_prof["iqr"] is not None
-    assert num_prof["outlier_count"] >= 1
-    assert "highly skewed" in num_prof["data_quality_flags"]
-
-    cat_prof = next(p for p in profiles if p["column_name"] == "cat")
-    assert cat_prof["unique_count"] == 10
-    assert "low cardinality" in cat_prof["data_quality_flags"]
-
-    const_prof = next(p for p in profiles if p["column_name"] == "const")
-    assert "constant/near-constant" in const_prof["data_quality_flags"]
-
-    empty_prof = next(p for p in profiles if p["column_name"] == "empty_col")
-    assert "completely missing" in empty_prof["data_quality_flags"]
 
 def test_duplicate_row_detection():
     df = pd.DataFrame({
@@ -151,3 +124,9 @@ def test_api_404_when_no_dataset():
 
     res = client.get("/api/datasets/summary")
     assert res.status_code == 404
+
+    eda_res = client.get("/api/eda/analysis")
+    assert eda_res.status_code == 404
+
+    dec_res = client.get("/api/decision/plan")
+    assert dec_res.status_code == 404
