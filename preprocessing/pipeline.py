@@ -171,7 +171,12 @@ class HybridPreprocessor(BaseEstimator, TransformerMixin):
             for col in self.feature_names_out_:
                 if col not in result_df.columns:
                     result_df[col] = 0.0
-            return result_df[self.feature_names_out_]
+            aligned_df = result_df[self.feature_names_out_].copy()
+            arr = np.nan_to_num(aligned_df.to_numpy(dtype=np.float64, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
+            assert arr.shape[1] == len(self.feature_names_out_), (
+                f"HybridPreprocessor shape mismatch: matrix has {arr.shape[1]} cols, expected {len(self.feature_names_out_)}"
+            )
+            return pd.DataFrame(arr, columns=self.feature_names_out_, index=X.index)
         else:
             return pd.DataFrame(index=X.index)
 

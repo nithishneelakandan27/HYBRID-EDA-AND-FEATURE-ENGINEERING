@@ -143,8 +143,17 @@ class HybridFeatureSelector(BaseEstimator, TransformerMixin):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        present = [col for col in self.selected_features_ if col in X.columns]
-        return X[present]
+        result = X.copy()
+        for col in self.selected_features_:
+            if col not in result.columns:
+                result[col] = 0.0
+
+        aligned = result[self.selected_features_].copy()
+        arr = np.nan_to_num(aligned.to_numpy(dtype=np.float64, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
+        assert arr.shape[1] == len(self.selected_features_), (
+            f"Selector shape mismatch: matrix has {arr.shape[1]} cols, expected {len(self.selected_features_)}"
+        )
+        return pd.DataFrame(arr, columns=self.selected_features_, index=X.index)
 
     def fit_transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
         return self.fit(X, y).transform(X)

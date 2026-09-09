@@ -154,20 +154,30 @@ class DatasetProfiler:
         return profiles
 
     @staticmethod
-    def generate_target_profile(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    def generate_target_profile(df: pd.DataFrame, target_col: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        Generates class breakdown for target column Late_delivery_risk.
+        Generates class breakdown for target column.
+        Auto-detects target if target_col is not provided.
         """
-        target_col = None
-        for col in df.columns:
-            if str(col).strip().lower() == "late_delivery_risk":
-                target_col = col
-                break
+        from profiling.auto_config import AutoConfigEngine
 
-        if not target_col:
+        resolved_target = target_col
+        target_info = None
+
+        if not resolved_target:
+            for col in df.columns:
+                if str(col).strip().lower() == "late_delivery_risk":
+                    resolved_target = col
+                    break
+
+        if not resolved_target:
+            target_info = AutoConfigEngine.detect_target(df)
+            resolved_target = target_info.get("column") or target_info.get("detected_column")
+
+        if not resolved_target or resolved_target not in df.columns:
             return None
 
-        series = df[target_col]
+        series = df[resolved_target]
         missing_target = int(series.isnull().sum())
         value_counts = series.value_counts(dropna=False).to_dict()
         
@@ -178,13 +188,22 @@ class DatasetProfiler:
             for k, v in value_counts.items()
         }
 
-        return {
-            "target_column": target_col,
+        profile_dict = {
+            "target_column": resolved_target,
             "missing_target_values": missing_target,
             "class_counts": class_counts,
             "class_percentages": class_percentages
         }
+        if target_info:
+            profile_dict["confidence"] = target_info.get("confidence")
+            profile_dict["confidence_level"] = target_info.get("confidence_level")
+            profile_dict["reason"] = target_info.get("reason")
+            profile_dict["candidate_columns"] = target_info.get("candidate_columns")
+
+        return profile_dict
 
     @staticmethod
-    def detect_leakage(df: pd.DataFrame) -> List[Dict[str, Any]]:
-        return LeakageDetector.detect_leakage(df)
+    def detect_leakage(df: pd.DataFrame, target_col: Optional[str] = None) -> List[Dict[str, Any]]:
+        from profiling.auto_config import AutoConfigEngine
+        return AutoConfigEngine.detect_leakage(df, target_col=target_col)
+

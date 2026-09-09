@@ -7,6 +7,8 @@ from services.profiler import DatasetProfiler
 
 router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
 
+from starlette.concurrency import run_in_threadpool
+
 @router.post("/upload")
 async def upload_dataset(file: UploadFile = File(...)):
     """
@@ -20,21 +22,26 @@ async def upload_dataset(file: UploadFile = File(...)):
 
     try:
         content = await file.read()
-        df = ingestion_service.load_csv_bytes(content, file.filename)
-        
-        summary = DatasetProfiler.generate_summary(df)
-        profiles = DatasetProfiler.generate_column_profiles(df)
-        target_profile = DatasetProfiler.generate_target_profile(df)
-        leakage_flags = DatasetProfiler.detect_leakage(df)
 
-        return {
-            "filename": file.filename,
-            "status": "success",
-            "summary": summary,
-            "column_profiles": profiles,
-            "target_profile": target_profile,
-            "leakage_review": leakage_flags
-        }
+        def _process_dataset():
+            df = ingestion_service.load_csv_bytes(content, file.filename)
+            summary = DatasetProfiler.generate_summary(df)
+            profiles = DatasetProfiler.generate_column_profiles(df)
+            target_profile = DatasetProfiler.generate_target_profile(df)
+            leakage_flags = DatasetProfiler.detect_leakage(df)
+            from profiling.auto_config import AutoConfigEngine
+            auto_config = AutoConfigEngine.generate_auto_config(df)
+            return {
+                "filename": file.filename,
+                "status": "success",
+                "summary": summary,
+                "column_profiles": profiles,
+                "target_profile": target_profile,
+                "leakage_review": leakage_flags,
+                "auto_config": auto_config
+            }
+
+        return await run_in_threadpool(_process_dataset)
     except ValueError as ve:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -97,3 +104,18 @@ async def get_leakage_review():
         "filename": ingestion_service.get_filename(),
         "leakage_review": DatasetProfiler.detect_leakage(df)
     }
+
+@router.get("/auto-config")
+async def get_auto_config():
+    df = ingestion_service.get_active_dataframe()
+    if df is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No dataset currently uploaded/ingested."
+        )
+    from profiling.auto_config import AutoConfigEngine
+    return {
+        "filename": ingestion_service.get_filename(),
+        "auto_config": AutoConfigEngine.generate_auto_config(df)
+    }
+
