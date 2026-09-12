@@ -308,3 +308,152 @@ def test_14_reproducibility_random_state():
         m1 = r1["results"][pipeline]["metrics"]
         m2 = r2["results"][pipeline]["metrics"]
         assert m1 == m2, f"Pipeline '{pipeline}' results not reproducible: {m1} vs {m2}"
+
+
+# ── Test 15: Feature Engineer Statistical Validation Guardrails ──────────────
+
+def test_15_feature_engineer_validation_guardrails():
+    # 1. Zero-denominator rejection
+    df_zero_denom = pd.DataFrame({
+        "num": [10.0, 20.0, 30.0, 40.0],
+        "denom_zero": [0.0, 0.0, 0.0, 0.0]
+    })
+    specs_zero = [{"name": "div_zero", "numerator_col": "num", "denominator_col": "denom_zero"}]
+    fe_zero = ConditionalFeatureEngineer(feature_specs=specs_zero)
+    fe_zero.fit(df_zero_denom)
+    rejected_names = [s["name"] for s in fe_zero.rejected_specs_]
+    assert "div_zero" in rejected_names
+    zero_item = next(s for s in fe_zero.rejected_specs_ if s["name"] == "div_zero")
+    assert zero_item["rule_id"] == "RULE_FE_INVALID_DENOMINATOR"
+
+    # 2. High missingness rejection
+    df_missing = pd.DataFrame({
+        "col_a": [1.0, None, None, None, None, 5.0],
+        "col_b": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    })
+    specs_missing = [{"name": "miss_feat", "numerator_col": "col_a", "denominator_col": "col_b"}]
+    fe_missing = ConditionalFeatureEngineer(feature_specs=specs_missing, max_missing_ratio=0.50)
+    fe_missing.fit(df_missing)
+    rejected_names = [s["name"] for s in fe_missing.rejected_specs_]
+    assert "miss_feat" in rejected_names
+    miss_item = next(s for s in fe_missing.rejected_specs_ if s["name"] == "miss_feat")
+    assert miss_item["rule_id"] == "RULE_FE_EXCESSIVE_MISSINGNESS"
+
+    # 3. Near-zero variance rejection (constant ratio)
+    df_const = pd.DataFrame({
+        "feat1": [10.0, 20.0, 30.0, 40.0, 50.0],
+        "feat2": [2.0, 4.0, 6.0, 8.0, 10.0]  # feat1 / feat2 is constant 5.0
+    })
+    specs_const = [{"name": "const_ratio", "numerator_col": "feat1", "denominator_col": "feat2"}]
+    fe_const = ConditionalFeatureEngineer(feature_specs=specs_const, variance_threshold=1e-4)
+    fe_const.fit(df_const)
+    rejected_names = [s["name"] for s in fe_const.rejected_specs_]
+    assert "const_ratio" in rejected_names
+    const_item = next(s for s in fe_const.rejected_specs_ if s["name"] == "const_ratio")
+    assert const_item["rule_id"] == "RULE_FE_NEAR_ZERO_VARIANCE"
+
+    # 4. Decision trace audit
+    trace = fe_const.get_decision_trace()
+    assert len(trace) > 0
+    assert trace[0]["rule_id"] == "RULE_FE_NEAR_ZERO_VARIANCE"
+    assert "selected_action" in trace[0]
+    assert trace[0]["selected_action"] == "reject_candidate"
+
+
+
+
+# ── Test 16: Feature Selection Stage 3 ANOVA Statistical Relevance ───────────
+
+def test_16_feature_selection_stage3_anova_relevance():
+    rng = np.random.default_rng(42)
+    n = 300
+    y = pd.Series(rng.integers(0, 2, n))
+    # informative feature: strong correlation with y
+    informative = y * 5.0 + rng.normal(0, 1, n)
+    # pure noise feature: completely uninformative
+    pure_noise = rng.normal(0, 1, n)
+    # constant feature: filtered at Stage 1
+    constant = np.ones(n)
+
+    X = pd.DataFrame({
+        "informative": informative,
+        "pure_noise": pure_noise,
+        "constant": constant
+    })
+
+    selector = HybridFeatureSelector(p_value_threshold=0.01)
+    X_sel = selector.fit_transform(X, y)
+
+    # Constant removed at Stage 1
+    removed_var_names = [x["feature"] for x in selector.removed_low_variance_]
+    assert "constant" in removed_var_names
+
+    # Pure noise removed at Stage 3 due to p > 0.01
+    removed_rel_names = [x["feature"] for x in selector.removed_low_relevance_]
+    assert "pure_noise" in removed_rel_names
+
+    # Informative feature retained
+    assert "informative" in selector.selected_features_
+    assert "informative" in X_sel.columns
+    assert "pure_noise" not in X_sel.columns
+
+    # Verify relevance scores structure
+    assert "informative" in selector.relevance_scores_
+    assert selector.relevance_scores_["informative"]["p_value"] < 0.01
+    assert selector.relevance_scores_["pure_noise"]["p_value"] > 0.01
+
+    # Verify decision trace items
+    trace = selector.get_decision_trace()
+    assert len(trace) >= 2
+    rule_ids = [t["rule_id"] for t in trace]
+    assert "RULE_FS_LOW_VARIANCE_FILTER" in rule_ids
+    assert "RULE_FS_STATISTICAL_RELEVANCE_FILTER" in rule_ids
+
+
+# ── Test 17: Hybrid Pipeline Decision Trace Output ───────────────────────────
+
+def test_17_hybrid_decision_trace_in_evaluation():
+    df = make_generic_df(n=100)
+    X_train, X_test, y_train, y_test = make_split(df)
+    res = run_hybrid_pipeline(X_train, X_test, y_train, y_test)
+    assert "decision_trace" in res
+    assert isinstance(res["decision_trace"], list)
+    assert len(res["decision_trace"]) > 0
+    # Every trace element must have required audit fields
+    for item in res["decision_trace"]:
+        assert "rule_id" in item
+        assert "selected_action" in item
+        assert "resulting_feature_change" in item
+
+
+# ── Test 18: Leakage Isolation in Feature Selection fit_transform ────────────
+
+def test_18_leakage_isolation_feature_selection():
+    rng = np.random.default_rng(42)
+    n_train, n_test = 200, 50
+    y_train = pd.Series(rng.integers(0, 2, n_train))
+    y_test = pd.Series(rng.integers(0, 2, n_test))
+
+    X_train = pd.DataFrame({
+        "feat_a": rng.normal(0, 1, n_train),
+        "feat_b": rng.normal(0, 1, n_train),
+        "feat_const_tr": np.zeros(n_train), # constant in train only
+    })
+    X_test = pd.DataFrame({
+        "feat_a": rng.normal(0, 1, n_test),
+        "feat_b": rng.normal(0, 1, n_test),
+        "feat_const_tr": rng.normal(0, 1, n_test), # NOT constant in test!
+    })
+
+    selector = HybridFeatureSelector()
+    X_tr_out = selector.fit_transform(X_train, y_train)
+    # Test set transform must strictly use decisions learned from train set
+    X_te_out = selector.transform(X_test)
+
+    removed_var_names = [x["feature"] for x in selector.removed_low_variance_]
+    assert "feat_const_tr" in removed_var_names
+    assert "feat_const_tr" not in X_tr_out.columns
+    assert "feat_const_tr" not in X_te_out.columns
+    assert list(X_tr_out.columns) == list(X_te_out.columns)
+
+

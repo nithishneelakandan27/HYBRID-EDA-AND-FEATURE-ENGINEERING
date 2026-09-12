@@ -16,9 +16,10 @@ import {
 
 export default function SmartDecisions() {
   const { decisionPlan, datasetResult, navigateTo } = useApp()
+  const [activeTab, setActiveTab] = useState('trace') // 'trace' | 'matrix'
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
-  const [selectedColumn, setSelectedColumn] = useState(null)
+  const [stageFilter, setStageFilter] = useState('all')
 
   if (!datasetResult) {
     return (
@@ -34,6 +35,7 @@ export default function SmartDecisions() {
   }
 
   const columns = decisionPlan?.columns || []
+  const decisionTrace = decisionPlan?.decision_trace || []
   const summary = decisionPlan?.summary_counts || {
     mean_imputations: 0,
     median_imputations: 0,
@@ -44,13 +46,23 @@ export default function SmartDecisions() {
     one_hot_encodings: 0,
     label_encodings: 0,
     excluded_columns: 0,
-    leakage_columns: 0
+    leakage_columns: 0,
+    total_decisions_logged: 0
   }
 
   const filteredColumns = columns.filter((col) => {
     const matchesSearch = col.column_name.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesStatus = statusFilter === 'all' || col.status === statusFilter
     return matchesSearch && matchesStatus
+  })
+
+  const filteredTrace = decisionTrace.filter((item) => {
+    const matchesSearch =
+      (item.feature || item.column_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.rule_id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.reason || '').toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesStage = stageFilter === 'all' || item.stage === stageFilter
+    return matchesSearch && matchesStage
   })
 
   return (
@@ -180,115 +192,273 @@ export default function SmartDecisions() {
         </div>
       </div>
 
-      {/* Interactive Decisions Table */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-        <div className="p-4 sm:p-5 border-b border-slate-200/80 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/40">
-          <div className="relative w-full sm:w-72">
-            <SearchIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search column in decisions..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-2xs"
-            />
-          </div>
+      {/* View Switcher Tabs */}
+      <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab('trace')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === 'trace'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            <SparklesIcon className="w-3.5 h-3.5" />
+            <span>Decision Trace: "Why This Decision?" ({decisionTrace.length})</span>
+          </button>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="bg-white border border-slate-200 text-slate-700 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:border-indigo-500 shadow-2xs"
-            >
-              <option value="all">All Column Statuses</option>
-              <option value="usable_numeric">Usable Numeric</option>
-              <option value="usable_categorical">Usable Categorical</option>
-              <option value="leakage_candidate">Leakage Candidate</option>
-              <option value="completely_missing">Completely Missing</option>
-              <option value="constant">Constant / Zero Variance</option>
-            </select>
-
-            <span className="text-xs text-slate-400 font-mono hidden md:inline">
-              Showing {filteredColumns.length} of {columns.length} columns
-            </span>
-          </div>
+          <button
+            onClick={() => setActiveTab('matrix')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === 'matrix'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            <SlidersIcon className="w-3.5 h-3.5" />
+            <span>Column Preprocessing Matrix ({columns.length})</span>
+          </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-50/80 text-slate-500 border-b border-slate-200/80 uppercase font-semibold">
-                <th className="py-3 px-4">Feature Name</th>
-                <th className="py-3 px-4">Type &amp; Status</th>
-                <th className="py-3 px-4">Statistical Evidence</th>
-                <th className="py-3 px-4">Hybrid Decision</th>
-                <th className="py-3 px-4">Method &amp; Explanation</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredColumns.map((col, idx) => (
-                <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3.5 px-4 font-semibold text-slate-900">
-                    {col.column_name}
-                  </td>
-
-                  <td className="py-3.5 px-4">
-                    <StatusBadge
-                      status={
-                        col.data_type === 'numeric'
-                          ? 'info'
-                          : col.status === 'leakage_candidate'
-                          ? 'danger'
-                          : 'teal'
-                      }
-                    >
-                      {col.data_type} • {col.status.replace(/_/g, ' ')}
-                    </StatusBadge>
-                  </td>
-
-                  <td className="py-3.5 px-4 font-mono text-slate-600">
-                    <div>Missing: {col.statistics?.missing_percentage ?? 0}%</div>
-                    {col.data_type === 'numeric' && col.statistics && (
-                      <div className="text-[11px] text-slate-400">
-                        Skew: {col.statistics.skewness ?? 'N/A'} | Outliers: {col.statistics.outlier_percentage ?? 0}%
-                      </div>
-                    )}
-                    {col.data_type !== 'numeric' && col.statistics && (
-                      <div className="text-[11px] text-slate-400">
-                        Cardinality: {col.statistics.cardinality ?? 'N/A'}
-                      </div>
-                    )}
-                  </td>
-
-                  <td className="py-3.5 px-4">
-                    <div className="flex flex-wrap gap-1">
-                      {col.decisions.map((d, dIdx) => (
-                        d.operation !== 'none' && (
-                          <span
-                            key={dIdx}
-                            className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100"
-                          >
-                            {d.operation}
-                          </span>
-                        )
-                      ))}
-                    </div>
-                  </td>
-
-                  <td className="py-3.5 px-4 text-slate-600 space-y-1 max-w-sm">
-                    {col.decisions.map((d, dIdx) => (
-                      <div key={dIdx} className="text-xs">
-                        <span className="font-semibold text-slate-800 capitalize">{d.step}: </span>
-                        <span>{d.reason}</span>
-                      </div>
-                    ))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <span className="text-xs font-mono text-slate-400 hidden sm:inline">
+          Deterministic Rule Engine
+        </span>
       </div>
+
+      {/* TAB 1: DECISION TRACE / "WHY THIS DECISION?" */}
+      {activeTab === 'trace' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          {/* Filters Bar */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="relative w-full sm:w-80">
+              <SearchIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search trace by feature, rule, or reason..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
+              {['all', 'column_evaluation', 'imputation', 'scaling', 'log_transformation', 'encoding'].map((st) => (
+                <button
+                  key={st}
+                  onClick={() => setStageFilter(st)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer capitalize ${
+                    stageFilter === st
+                      ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                      : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200/60'
+                  }`}
+                >
+                  {st.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Trace Cards Feed */}
+          <div className="space-y-3">
+            {filteredTrace.map((item, idx) => (
+              <div
+                key={idx}
+                className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs hover:border-indigo-200 transition-all space-y-3"
+              >
+                {/* Card Header: Feature & Stage */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-sm text-slate-900">
+                      {item.feature || item.column_name}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 font-mono">
+                      {item.stage?.replace('_', ' ')}
+                    </span>
+                  </div>
+
+                  <span className="text-[11px] font-mono text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-md border border-indigo-100 font-semibold">
+                    {item.rule_id}
+                  </span>
+                </div>
+
+                {/* 5-Step Explainability Chain */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                  {/* Step 1: Finding / Statistical Evidence */}
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/70">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      1. Dataset Finding
+                    </span>
+                    <div className="font-mono text-slate-700 text-[11px] space-y-0.5">
+                      {item.detected_statistic && typeof item.detected_statistic === 'object'
+                        ? Object.entries(item.detected_statistic).slice(0, 4).map(([k, v]) => (
+                            <div key={k} className="truncate">
+                              <span className="text-slate-400">{k}:</span> <b>{String(v)}</b>
+                            </div>
+                          ))
+                        : 'Statistical profile verified'}
+                    </div>
+                  </div>
+
+                  {/* Step 2: Rule Condition */}
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/70">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      2. Rule Triggered / Condition
+                    </span>
+                    <div className="font-mono text-indigo-700 font-semibold text-[11px] break-words">
+                      {item.threshold_condition || 'Deterministic condition check'}
+                    </div>
+                  </div>
+
+                  {/* Step 3: Action Selected */}
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/70">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      3. Selected Action
+                    </span>
+                    <div className="font-bold text-slate-900 font-mono text-[11px] flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" />
+                      <span className="truncate">{item.selected_action || 'none'}</span>
+                    </div>
+                  </div>
+
+                  {/* Step 4: Resulting Change */}
+                  <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-200/70">
+                    <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1">
+                      4. Resulting Feature Change
+                    </span>
+                    <div className="text-emerald-900 text-[11px] font-medium leading-relaxed">
+                      {item.resulting_feature_change || 'Representation maintained'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Human-Readable Rationale */}
+                <div className="text-xs text-slate-600 bg-slate-50/60 p-3 rounded-xl border border-slate-100 flex items-start gap-2">
+                  <span className="font-bold text-slate-800 shrink-0">Why this decision:</span>
+                  <span>{item.reason}</span>
+                </div>
+              </div>
+            ))}
+
+            {filteredTrace.length === 0 && (
+              <div className="p-8 text-center text-xs text-slate-500 bg-white rounded-2xl border border-slate-200">
+                No decision trace records match the selected stage and search filters.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: COLUMN PREPROCESSING MATRIX */}
+      {activeTab === 'matrix' && (
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden animate-in fade-in duration-150">
+          <div className="p-4 sm:p-5 border-b border-slate-200/80 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/40">
+            <div className="relative w-full sm:w-72">
+              <SearchIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search column in decisions..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="bg-white border border-slate-200 text-slate-700 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:border-indigo-500 shadow-2xs"
+              >
+                <option value="all">All Column Statuses</option>
+                <option value="usable_numeric">Usable Numeric</option>
+                <option value="usable_categorical">Usable Categorical</option>
+                <option value="leakage_candidate">Leakage Candidate</option>
+                <option value="completely_missing">Completely Missing</option>
+                <option value="constant">Constant / Zero Variance</option>
+              </select>
+
+              <span className="text-xs text-slate-400 font-mono hidden md:inline">
+                Showing {filteredColumns.length} of {columns.length} columns
+              </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-50/80 text-slate-500 border-b border-slate-200/80 uppercase font-semibold">
+                  <th className="py-3 px-4">Feature Name</th>
+                  <th className="py-3 px-4">Type &amp; Status</th>
+                  <th className="py-3 px-4">Statistical Evidence</th>
+                  <th className="py-3 px-4">Hybrid Decision</th>
+                  <th className="py-3 px-4">Method &amp; Explanation</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredColumns.map((col, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3.5 px-4 font-semibold text-slate-900">
+                      {col.column_name}
+                    </td>
+
+                    <td className="py-3.5 px-4">
+                      <StatusBadge
+                        status={
+                          col.data_type === 'numeric'
+                            ? 'info'
+                            : col.status === 'leakage_candidate'
+                            ? 'danger'
+                            : 'teal'
+                        }
+                      >
+                        {col.data_type} • {col.status.replace(/_/g, ' ')}
+                      </StatusBadge>
+                    </td>
+
+                    <td className="py-3.5 px-4 font-mono text-slate-600">
+                      <div>Missing: {col.statistics?.missing_percentage ?? 0}%</div>
+                      {col.data_type === 'numeric' && col.statistics && (
+                        <div className="text-[11px] text-slate-400">
+                          Skew: {col.statistics.skewness ?? 'N/A'} | Outliers: {col.statistics.outlier_percentage ?? 0}%
+                        </div>
+                      )}
+                      {col.data_type !== 'numeric' && col.statistics && (
+                        <div className="text-[11px] text-slate-400">
+                          Cardinality: {col.statistics.cardinality ?? 'N/A'}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="py-3.5 px-4">
+                      <div className="flex flex-wrap gap-1">
+                        {col.decisions.map((d, dIdx) => (
+                          d.operation !== 'none' && (
+                            <span
+                              key={dIdx}
+                              className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100"
+                            >
+                              {d.operation}
+                            </span>
+                          )
+                        ))}
+                      </div>
+                    </td>
+
+                    <td className="py-3.5 px-4 text-slate-600 space-y-1 max-w-sm">
+                      {col.decisions.map((d, dIdx) => (
+                        <div key={dIdx} className="text-xs">
+                          <span className="font-semibold text-slate-800 capitalize">{d.step}: </span>
+                          <span>{d.reason}</span>
+                        </div>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </PageContainer>
   )
 }

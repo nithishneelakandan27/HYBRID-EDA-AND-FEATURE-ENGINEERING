@@ -92,19 +92,54 @@ export default function FeatureEngineering() {
       </div>
 
       {/* Feature Engineering Specifications & Execution List */}
+      {/* Feature Engineering Specifications & Execution List */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-            Engineered Domain Signals
+            Engineered Domain Signals &amp; Candidates
           </h3>
           <span className="text-xs font-mono font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
-            {configuredSpecs.length} Specs Registered
+            {configuredSpecs.length} Specs Evaluated
           </span>
+        </div>
+
+        {/* Statistical Guardrails Callout */}
+        <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2 font-mono">
+            Mandatory Statistical &amp; Structural Candidacy Checklist
+          </span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-700">
+            <div className="flex items-center gap-1.5 font-medium">
+              <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>1. Numeric Operands Exist</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-medium">
+              <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>2. Zero Target Leakage</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-medium">
+              <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>3. Usable Non-Zero Denominator</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-medium">
+              <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>4. Missing Rate &lt; 50%</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-medium">
+              <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>5. Non-Zero Variance (&ge; 1e-4)</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-medium">
+              <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>6. Non-Redundant (|r| &le; 0.98)</span>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {configuredSpecs.map((spec, idx) => {
-            const isEvaluatedAndAccepted = acceptedList.some(a => a.name === spec.name)
+            const isRejected = rejectedList.some(r => r.name === spec.name)
+            const rejectedInfo = rejectedList.find(r => r.name === spec.name)
 
             return (
               <div
@@ -115,14 +150,14 @@ export default function FeatureEngineering() {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
-                        Signal Ratio
+                        Signal Ratio Candidate
                       </span>
                       <h4 className="text-base font-bold text-slate-900 mt-0.5 font-mono">
                         {spec.name}
                       </h4>
                     </div>
-                    <StatusBadge status={spec.leakage_risk ? 'danger' : 'success'}>
-                      {spec.leakage_risk ? 'Leakage Risk' : 'Leakage Free'}
+                    <StatusBadge status={spec.leakage_risk || isRejected ? 'danger' : 'success'}>
+                      {spec.leakage_risk ? 'Leakage Risk' : isRejected ? 'Rejected' : 'Leakage Free'}
                     </StatusBadge>
                   </div>
 
@@ -146,15 +181,28 @@ export default function FeatureEngineering() {
                         ? 'High-margin items frequently trigger expedited carrier prioritization, whereas low-margin bulk items correlate with lower-priority consolidation routes.'
                         : 'Provides scale-invariant signal capturing operational efficiency.'}
                     </div>
+                    {isRejected && (
+                      <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-900 text-xs">
+                        <span className="font-bold">Rejection reason: </span>
+                        <span>{rejectedInfo?.reason}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
                   <span className="text-slate-400">Execution Status:</span>
-                  <span className="font-semibold text-emerald-600 flex items-center gap-1">
-                    <CheckCircleIcon className="w-3.5 h-3.5" />
-                    <span>Validated for ML Pipeline</span>
-                  </span>
+                  {isRejected ? (
+                    <span className="font-semibold text-rose-600 flex items-center gap-1">
+                      <AlertTriangleIcon className="w-3.5 h-3.5" />
+                      <span>Rejected by Guardrails</span>
+                    </span>
+                  ) : (
+                    <span className="font-semibold text-emerald-600 flex items-center gap-1">
+                      <CheckCircleIcon className="w-3.5 h-3.5" />
+                      <span>Validated for ML Pipeline</span>
+                    </span>
+                  )}
                 </div>
               </div>
             )
@@ -164,10 +212,18 @@ export default function FeatureEngineering() {
 
       {/* Execution Status Card (if evaluation already ran) */}
       {feReport && (
-        <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-3">
-          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-            Evaluation Execution Report
-          </h4>
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+              Evaluation Execution Report &amp; Guardrail Audit
+            </h4>
+            <div className="text-xs font-mono text-slate-500">
+              <span className="text-emerald-700 font-bold">{acceptedList.length} Accepted</span>
+              {' • '}
+              <span className="text-rose-700 font-bold">{rejectedList.length} Rejected</span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             {acceptedList.map((item, idx) => (
               <div key={idx} className="p-3 bg-emerald-50/50 border border-emerald-200 rounded-xl text-emerald-950 flex items-center justify-between">

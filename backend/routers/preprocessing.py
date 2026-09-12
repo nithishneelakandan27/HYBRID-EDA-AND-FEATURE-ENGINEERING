@@ -127,6 +127,7 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
             },
             "metadata": meta,
             "feature_names": meta["feature_names"],
+            "decision_trace": meta.get("decision_trace", []),
             "preview": preview_data
         }
 

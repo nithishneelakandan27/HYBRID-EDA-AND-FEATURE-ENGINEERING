@@ -223,5 +223,11 @@ class HybridPreprocessor(BaseEstimator, TransformerMixin):
             "leakage_columns": self.leakage_cols_,
             "numeric_operations": numeric_meta,
             "categorical_operations": categorical_meta,
-            "feature_names": self.feature_names_out_
+            "feature_names": self.feature_names_out_,
+            "decision_trace": self.decision_plan_.get("decision_trace", []) if self.decision_plan_ else []
         }
+
+    def get_decision_trace(self) -> List[Dict[str, Any]]:
+        if not self.is_fitted_ or not self.decision_plan_:
+            return []
+        return self.decision_plan_.get("decision_trace", [])

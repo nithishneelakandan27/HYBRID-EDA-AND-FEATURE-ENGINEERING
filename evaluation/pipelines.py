@@ -172,7 +172,7 @@ def run_minimal_pipeline(
 
     # --- Model ---
     t_model = time.perf_counter()
-    model = LogisticRegression(solver="lbfgs", max_iter=200, tol=1e-4, random_state=42)
+    model = LogisticRegression(solver="lbfgs", max_iter=1000, tol=1e-4, random_state=42)
     model.fit(X_tr_scaled, y_train)
     train_time = round(time.perf_counter() - t_model, 4)
 
@@ -203,7 +203,7 @@ def run_minimal_pipeline(
         "model_diagnostics": {
             "n_iter": int(model.n_iter_[0]),
             "solver": "lbfgs",
-            "converged": bool(model.n_iter_[0] < 200)
+            "converged": bool(model.n_iter_[0] < 1000)
         },
         "metrics": metrics,
         "feature_engineering_report": None,
@@ -327,7 +327,7 @@ def run_fixed_pipeline(
 
     # --- Model ---
     t_model = time.perf_counter()
-    model = LogisticRegression(solver="lbfgs", max_iter=200, tol=1e-4, random_state=42)
+    model = LogisticRegression(solver="lbfgs", max_iter=1000, tol=1e-4, random_state=42)
     model.fit(X_tr_scaled, y_train)
     train_time = round(time.perf_counter() - t_model, 4)
 
@@ -358,7 +358,7 @@ def run_fixed_pipeline(
         "model_diagnostics": {
             "n_iter": int(model.n_iter_[0]),
             "solver": "lbfgs",
-            "converged": bool(model.n_iter_[0] < 200)
+            "converged": bool(model.n_iter_[0] < 1000)
         },
         "metrics": metrics,
         "feature_engineering_report": None,
@@ -409,10 +409,12 @@ def run_hybrid_pipeline(
     # --- Step 2: Feature Engineering ---
     t_fe = time.perf_counter()
     fe_report = None
+    target_name = y_train.name if hasattr(y_train, "name") else None
     if feature_specs:
         engineer = ConditionalFeatureEngineer(
             feature_specs=feature_specs,
-            leakage_columns=leakage_columns
+            leakage_columns=leakage_columns,
+            target_column=str(target_name) if target_name else None
         )
         engineer.fit(X_tr_pre)
         X_tr_pre = engineer.transform(X_tr_pre)
@@ -429,8 +431,12 @@ def run_hybrid_pipeline(
 
     # --- Step 3: Feature Selection ---
     t_fs = time.perf_counter()
-    selector = HybridFeatureSelector()
-    X_tr_sel = selector.fit_transform(X_tr_pre)
+    selector = HybridFeatureSelector(
+        variance_threshold=1e-4,
+        correlation_threshold=0.95,
+        p_value_threshold=0.05
+    )
+    X_tr_sel = selector.fit_transform(X_tr_pre, y_train)
     X_te_sel = selector.transform(X_te_pre)
     fs_report = selector.get_report()
     fs_time = round(time.perf_counter() - t_fs, 4)
@@ -468,7 +474,7 @@ def run_hybrid_pipeline(
 
     # --- Step 4: Model ---
     t_model = time.perf_counter()
-    model = LogisticRegression(solver="lbfgs", max_iter=200, tol=1e-4, random_state=42)
+    model = LogisticRegression(solver="lbfgs", max_iter=1000, tol=1e-4, random_state=42)
     model.fit(X_tr_scaled, y_train)
     train_time = round(time.perf_counter() - t_model, 4)
 
@@ -478,6 +484,15 @@ def run_hybrid_pipeline(
     predict_time = round(time.perf_counter() - t_pred, 4)
 
     metrics = compute_metrics(y_test, y_pred, y_prob)
+
+    # Compile structured end-to-end decision trace
+    decision_trace = []
+    if hasattr(preprocessor, "get_decision_trace"):
+        decision_trace.extend(preprocessor.get_decision_trace())
+    if fe_report and "decision_trace" in fe_report:
+        decision_trace.extend(fe_report["decision_trace"])
+    if fs_report and "decision_trace" in fs_report:
+        decision_trace.extend(fs_report["decision_trace"])
 
     return {
         "pipeline": "Hybrid",
@@ -499,11 +514,12 @@ def run_hybrid_pipeline(
         "model_diagnostics": {
             "n_iter": int(model.n_iter_[0]),
             "solver": "lbfgs",
-            "converged": bool(model.n_iter_[0] < 200)
+            "converged": bool(model.n_iter_[0] < 1000)
         },
         "metrics": metrics,
         "feature_engineering_report": fe_report,
-        "feature_selection_report": fs_report
+        "feature_selection_report": fs_report,
+        "decision_trace": decision_trace
     }
 
 
@@ -607,6 +623,7 @@ def run_all_pipelines(
         "status": "success",
         "split_info": split_info,
         "total_runtime_sec": total_orchestration_sec,
+        "decision_trace": results_hybrid.get("decision_trace", []),
         "results": {
             "minimal": results_minimal,
             "fixed": results_fixed,

@@ -26,6 +26,7 @@ class HybridDecisionEngine:
         total_cols = int(df.shape[1])
         
         columns_plan = []
+        decision_trace = []
 
         # Aggregate counts
         summary_counts = {
@@ -40,7 +41,8 @@ class HybridDecisionEngine:
             "usable_numeric_columns": 0,
             "usable_categorical_columns": 0,
             "excluded_columns": 0,
-            "leakage_columns": 0
+            "leakage_columns": 0,
+            "total_decisions_logged": 0
         }
 
         for col in df.columns:
@@ -85,6 +87,21 @@ class HybridDecisionEngine:
                 else:
                     stats.update({"min": None, "max": None, "mean": None, "median": None, "skewness": None})
 
+            # Record column evaluation in decision trace
+            col_eval_trace = {
+                "stage": "column_evaluation",
+                "column_name": str(col),
+                "feature": str(col),
+                "rule_id": status_info.get("rule_id", "RULE_COLUMN_STATUS"),
+                "rule_triggered": status_info.get("rule_id", "RULE_COLUMN_STATUS"),
+                "detected_statistic": status_info.get("detected_statistic", stats),
+                "threshold_condition": status_info.get("threshold_condition", "status validation"),
+                "selected_action": status_info.get("selected_action", status_info["action"]),
+                "reason": status_info["reason"],
+                "resulting_feature_change": status_info.get("resulting_feature_change", "Status recorded")
+            }
+            decision_trace.append(col_eval_trace)
+
             # Handle Excluded / Leakage Columns
             if not is_usable:
                 if status == "leakage_candidate":
@@ -92,12 +109,19 @@ class HybridDecisionEngine:
                 else:
                     summary_counts["excluded_columns"] += 1
 
-                col_decisions.append({
+                exclusion_decision = {
                     "step": "exclusion",
                     "operation": status_info["action"],
                     "action": status_info["action"],
-                    "reason": status_info["reason"]
-                })
+                    "selected_action": status_info.get("selected_action", status_info["action"]),
+                    "rule_id": status_info.get("rule_id", "RULE_EXCLUSION"),
+                    "rule_triggered": status_info.get("rule_id", "RULE_EXCLUSION"),
+                    "detected_statistic": status_info.get("detected_statistic", stats),
+                    "threshold_condition": status_info.get("threshold_condition", "exclusion condition met"),
+                    "reason": status_info["reason"],
+                    "resulting_feature_change": status_info.get("resulting_feature_change", "Feature dropped")
+                }
+                col_decisions.append(exclusion_decision)
 
                 columns_plan.append({
                     "column_name": str(col),
@@ -126,6 +150,18 @@ class HybridDecisionEngine:
                     elif imp_decision["operation"] == "median_imputation":
                         summary_counts["median_imputations"] += 1
                 col_decisions.append(imp_decision)
+                decision_trace.append({
+                    "stage": "imputation",
+                    "column_name": str(col),
+                    "feature": str(col),
+                    "rule_id": imp_decision.get("rule_id", "RULE_IMPUTATION"),
+                    "rule_triggered": imp_decision.get("rule_id", "RULE_IMPUTATION"),
+                    "detected_statistic": imp_decision.get("detected_statistic", {}),
+                    "threshold_condition": imp_decision.get("threshold_condition", ""),
+                    "selected_action": imp_decision.get("selected_action", imp_decision["operation"]),
+                    "reason": imp_decision["reason"],
+                    "resulting_feature_change": imp_decision.get("resulting_feature_change", "")
+                })
 
                 # Step B: Log Transformation
                 log_decision = DecisionRules.evaluate_log_transformation(
@@ -136,6 +172,18 @@ class HybridDecisionEngine:
                 if log_decision["applied"]:
                     summary_counts["log1p_transformations"] += 1
                 col_decisions.append(log_decision)
+                decision_trace.append({
+                    "stage": "log_transformation",
+                    "column_name": str(col),
+                    "feature": str(col),
+                    "rule_id": log_decision.get("rule_id", "RULE_LOG1P"),
+                    "rule_triggered": log_decision.get("rule_id", "RULE_LOG1P"),
+                    "detected_statistic": log_decision.get("detected_statistic", {}),
+                    "threshold_condition": log_decision.get("threshold_condition", ""),
+                    "selected_action": log_decision.get("selected_action", log_decision["operation"]),
+                    "reason": log_decision["reason"],
+                    "resulting_feature_change": log_decision.get("resulting_feature_change", "")
+                })
 
                 # Step C: Outlier-Aware Scaling
                 scale_decision = DecisionRules.evaluate_scaling(
@@ -148,6 +196,18 @@ class HybridDecisionEngine:
                 elif scale_decision["scaler"] == "StandardScaler":
                     summary_counts["standard_scalers"] += 1
                 col_decisions.append(scale_decision)
+                decision_trace.append({
+                    "stage": "scaling",
+                    "column_name": str(col),
+                    "feature": str(col),
+                    "rule_id": scale_decision.get("rule_id", "RULE_SCALING"),
+                    "rule_triggered": scale_decision.get("rule_id", "RULE_SCALING"),
+                    "detected_statistic": scale_decision.get("detected_statistic", {}),
+                    "threshold_condition": scale_decision.get("threshold_condition", ""),
+                    "selected_action": scale_decision.get("selected_action", scale_decision["operation"]),
+                    "reason": scale_decision["reason"],
+                    "resulting_feature_change": scale_decision.get("resulting_feature_change", "")
+                })
 
                 # Summary rationale for numeric column
                 summary_rationale = (
@@ -167,6 +227,18 @@ class HybridDecisionEngine:
                 if cat_imp["operation"] != "none":
                     summary_counts["most_frequent_imputations"] += 1
                 col_decisions.append(cat_imp)
+                decision_trace.append({
+                    "stage": "imputation",
+                    "column_name": str(col),
+                    "feature": str(col),
+                    "rule_id": cat_imp.get("rule_id", "RULE_IMPUTATION"),
+                    "rule_triggered": cat_imp.get("rule_id", "RULE_IMPUTATION"),
+                    "detected_statistic": cat_imp.get("detected_statistic", {}),
+                    "threshold_condition": cat_imp.get("threshold_condition", ""),
+                    "selected_action": cat_imp.get("selected_action", cat_imp["operation"]),
+                    "reason": cat_imp["reason"],
+                    "resulting_feature_change": cat_imp.get("resulting_feature_change", "")
+                })
 
                 # Step B: Categorical Encoding
                 enc_decision = DecisionRules.evaluate_encoding(
@@ -179,6 +251,18 @@ class HybridDecisionEngine:
                 elif enc_decision["operation"] == "label_encoding":
                     summary_counts["label_encodings"] += 1
                 col_decisions.append(enc_decision)
+                decision_trace.append({
+                    "stage": "encoding",
+                    "column_name": str(col),
+                    "feature": str(col),
+                    "rule_id": enc_decision.get("rule_id", "RULE_ENCODING"),
+                    "rule_triggered": enc_decision.get("rule_id", "RULE_ENCODING"),
+                    "detected_statistic": enc_decision.get("detected_statistic", {}),
+                    "threshold_condition": enc_decision.get("threshold_condition", ""),
+                    "selected_action": enc_decision.get("selected_action", enc_decision["operation"]),
+                    "reason": enc_decision["reason"],
+                    "resulting_feature_change": enc_decision.get("resulting_feature_change", "")
+                })
 
                 # Summary rationale for categorical column
                 summary_rationale = (
@@ -195,6 +279,8 @@ class HybridDecisionEngine:
                 "summary_rationale": summary_rationale
             })
 
+        summary_counts["total_decisions_logged"] = len(decision_trace)
+
         return {
             "dataset_summary": {
                 "num_rows": total_rows,
@@ -205,5 +291,6 @@ class HybridDecisionEngine:
                 "leakage_count": summary_counts["leakage_columns"]
             },
             "summary_counts": summary_counts,
-            "columns": columns_plan
+            "columns": columns_plan,
+            "decision_trace": decision_trace
         }

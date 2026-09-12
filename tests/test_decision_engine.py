@@ -157,3 +157,25 @@ def test_15_all_decisions_have_explanations():
         for d in col["decisions"]:
             assert "reason" in d
             assert len(d["reason"].strip()) > 0
+
+def test_16_structured_decision_trace_fields():
+    df = pd.DataFrame({
+        "skewed_feat": [1.0, 1.2, 1.1, 1.3, 1000.0, None],
+        "cat_low_card": ["cat", "dog", "cat", "bird", "dog", "cat"],
+        "cat_high_card": [f"user_{i}" for i in range(6)],
+    })
+    plan = HybridDecisionEngine.generate_plan(df)
+    assert "decision_trace" in plan
+    trace = plan["decision_trace"]
+    assert len(trace) > 0
+    for item in trace:
+        assert "column_name" in item or "feature" in item
+        assert "rule_id" in item
+        assert "detected_statistic" in item
+        assert "threshold_condition" in item
+        assert "selected_action" in item
+        assert "resulting_feature_change" in item
+        assert "reason" in item
+        assert len(item["rule_id"]) > 0
+
+
