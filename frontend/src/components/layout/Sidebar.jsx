@@ -13,7 +13,9 @@ import {
   HelpCircleIcon,
   InfoIcon,
   SparklesIcon,
-  XIcon
+  XIcon,
+  BrainCircuitIcon,
+  TrendingUpIcon
 } from '../common/Icons'
 
 export default function Sidebar() {
@@ -25,7 +27,8 @@ export default function Sidebar() {
     setMobileSidebarOpen,
     backendStatus,
     health,
-    datasetResult
+    datasetResult,
+    modelingResults
   } = useApp()
 
   const navSections = [
@@ -108,6 +111,16 @@ export default function Sidebar() {
           label: 'Model Evaluation',
           subtitle: 'Evaluate 3 ML pipelines',
           icon: ActivityIcon
+        },
+        {
+          route: '/modeling',
+          label: 'ML Modeling',
+          subtitle: 'Train & compare ML models',
+          icon: BrainCircuitIcon,
+          isHighlight: true,
+          badge: Object.keys(modelingResults).length > 0
+            ? `${Object.keys(modelingResults).length} trained`
+            : null
         }
       ]
     },

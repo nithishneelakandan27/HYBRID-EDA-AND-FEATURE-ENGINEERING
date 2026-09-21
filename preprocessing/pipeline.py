@@ -180,6 +180,59 @@ class HybridPreprocessor(BaseEstimator, TransformerMixin):
         else:
             return pd.DataFrame(index=X.index)
 
+    def transform_cleaned(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Returns the Phase 1 Cleaned Dataset:
+        - Imputes missing values in numeric columns using SkewAwareNumericImputer (learned from X_train).
+        - Imputes missing values in categorical columns using SimpleImputer (most_frequent learned from X_train).
+        - Retains unscaled, un-logged numeric values with original column names.
+        - Retains original human-readable categorical string categories without encoding.
+        - Excludes leakage and constant/unusable columns.
+        """
+        if not self.is_fitted_:
+            raise RuntimeError("HybridPreprocessor instance is not fitted yet. Call 'fit' before 'transform_cleaned'.")
+
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        cleaned_parts = []
+
+        # 1. Transform Numeric Columns (Imputation ONLY, no log1p, no scaling)
+        if self.usable_numeric_cols_:
+            present_num = [c for c in self.usable_numeric_cols_ if c in X.columns]
+            X_num = X[present_num].copy()
+
+            for c in self.usable_numeric_cols_:
+                if c not in X_num.columns:
+                    X_num[c] = np.nan
+
+            X_num = X_num[self.usable_numeric_cols_]
+            X_num_imp = self.numeric_imputer_.transform(X_num)
+            cleaned_parts.append(X_num_imp)
+
+        # 2. Transform Categorical Columns (Imputation ONLY, no encoding)
+        if self.usable_categorical_cols_:
+            present_cat = [c for c in self.usable_categorical_cols_ if c in X.columns]
+            X_cat = X[present_cat].copy()
+
+            for c in self.usable_categorical_cols_:
+                if c not in X_cat.columns:
+                    X_cat[c] = "missing"
+
+            X_cat = X_cat[self.usable_categorical_cols_]
+            X_cat_imp_arr = self.categorical_imputer_.transform(X_cat)
+            X_cat_imp = pd.DataFrame(X_cat_imp_arr, columns=self.usable_categorical_cols_, index=X.index)
+            cleaned_parts.append(X_cat_imp)
+
+        if cleaned_parts:
+            result_df = pd.concat(cleaned_parts, axis=1)
+            # Reorder columns to match original dataset column order where possible
+            ordered_cols = [c for c in X.columns if c in result_df.columns]
+            remaining_cols = [c for c in result_df.columns if c not in ordered_cols]
+            return result_df[ordered_cols + remaining_cols].copy()
+        else:
+            return pd.DataFrame(index=X.index)
+
     def fit_transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
         return self.fit(X, y).transform(X)
 

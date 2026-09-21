@@ -2,6 +2,12 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 
 const AppContext = createContext(null)
 
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || (
+  typeof window !== 'undefined' && window.location.port === '5173'
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : ''
+)
+
 export function AppProvider({ children }) {
   // Backend connection status
   const [health, setHealth] = useState(null)
@@ -20,6 +26,7 @@ export function AppProvider({ children }) {
       '/feature-engineering',
       '/feature-selection',
       '/evaluation',
+      '/modeling',
       '/how-it-works',
       '/about'
     ]
@@ -44,6 +51,7 @@ export function AppProvider({ children }) {
         '/feature-engineering',
         '/feature-selection',
         '/evaluation',
+        '/modeling',
         '/how-it-works',
         '/about'
       ]
@@ -80,6 +88,7 @@ export function AppProvider({ children }) {
   const [loadingEda, setLoadingEda] = useState(false)
   const [loadingDecision, setLoadingDecision] = useState(false)
   const [executingPrep, setExecutingPrep] = useState(false)
+  const [downloadingCleaned, setDownloadingCleaned] = useState(false)
   const [prepError, setPrepError] = useState(null)
   const [runningEval, setRunningEval] = useState(false)
   const [evalError, setEvalError] = useState(null)
@@ -90,15 +99,29 @@ export function AppProvider({ children }) {
   const [randomState, setRandomState] = useState(42)
 
   // Evaluation config state
-  const [evalTargetCol, setEvalTargetCol] = useState('Late_delivery_risk')
+  const [evalTargetCol, setEvalTargetCol] = useState(null)
   const [evalLeakageCols, setEvalLeakageCols] = useState(
     'Delivery Status,Days for shipping (real),shipping date (DateOrders),Product Description,Order Zipcode'
   )
   const [autoConfig, setAutoConfig] = useState(null)
 
-  // Health check polling
+  // ── Phase II: ML Modeling state ──────────────────────────────────────
+  const [modelingTargetCol, setModelingTargetCol] = useState(null)
+  const [modelingDomainProfile, setModelingDomainProfile] = useState(null)
+  // modelingResults: { [model_type]: result_dict }
+  const [modelingResults, setModelingResults] = useState({})
+  // trainingModels: Set of model_type strings currently training
+  const [trainingModels, setTrainingModels] = useState(new Set())
+  // modelingErrors: { [model_type]: error message }
+  const [modelingErrors, setModelingErrors] = useState({})
+  // modelConfig: catalog & dataset info from /api/modeling/config
+  const [modelConfig, setModelConfig] = useState(null)
+  // predictionResult: last single-record prediction response
+  const [predictionResult, setPredictionResult] = useState(null)
+  const [predictingModel, setPredictingModel] = useState(null)
+
   const checkHealth = useCallback(() => {
-    fetch('/api/health')
+    fetch(`${API_BASE}/api/health`)
       .then(res => {
         if (!res.ok) throw new Error('Status not ok')
         return res.json()
@@ -136,7 +159,7 @@ export function AppProvider({ children }) {
   const fetchEdaAnalysis = useCallback(async () => {
     setLoadingEda(true)
     try {
-      const res = await fetch('/api/eda/analysis')
+      const res = await fetch(`${API_BASE}/api/eda/analysis`)
       if (res.ok) {
         const data = await res.json()
         setEdaResult(data.eda)
@@ -153,7 +176,7 @@ export function AppProvider({ children }) {
   const fetchDecisionPlan = useCallback(async () => {
     setLoadingDecision(true)
     try {
-      const res = await fetch('/api/decision/plan')
+      const res = await fetch(`${API_BASE}/api/decision/plan`)
       if (res.ok) {
         const data = await res.json()
         setDecisionPlan(data.decision_plan)
@@ -185,14 +208,14 @@ export function AppProvider({ children }) {
 
     try {
       setUploadStep(2) // Profiling dataset
-      const response = await fetch('/api/datasets/upload', {
+      const response = await fetch(`${API_BASE}/api/datasets/upload`, {
         method: 'POST',
         body: formData,
       })
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}))
-        throw new Error(errData.detail || 'Failed to upload and profile dataset.')
+        throw new Error(errData.detail || `Upload failed (status ${response.status}): ${response.statusText || 'Server error'}`)
       }
 
       const data = await response.json()
@@ -201,8 +224,11 @@ export function AppProvider({ children }) {
 
       if (data.auto_config) {
         setAutoConfig(data.auto_config)
-        const tgt = data.auto_config.target?.column || data.auto_config.target?.detected_column || 'Late_delivery_risk'
-        setEvalTargetCol(tgt)
+        const tgt = data.auto_config.target?.column || data.auto_config.target?.detected_column || null
+        if (tgt) {
+          setEvalTargetCol(tgt)
+          setModelingTargetCol(tgt)
+        }
         if (data.auto_config.leakage_column_names && data.auto_config.leakage_column_names.length > 0) {
           setEvalLeakageCols(data.auto_config.leakage_column_names.join(', '))
         }
@@ -231,7 +257,7 @@ export function AppProvider({ children }) {
     setExecutingPrep(true)
     setPrepError(null)
     try {
-      const res = await fetch('/api/preprocessing/execute', {
+      const res = await fetch(`${API_BASE}/api/preprocessing/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -256,6 +282,38 @@ export function AppProvider({ children }) {
     }
   }, [testSize, randomState])
 
+  const downloadCleanedDataset = useCallback(async () => {
+    setDownloadingCleaned(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/preprocessing/export-cleaned`)
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || 'Failed to download cleaned dataset.')
+      }
+      const blob = await res.blob()
+      const contentDisposition = res.headers.get('content-disposition')
+      let filename = 'cleaned_dataset.csv'
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename=["']?([^"';]+)["']?/)
+        if (match && match[1]) {
+          filename = match[1]
+        }
+      }
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      throw err
+    } finally {
+      setDownloadingCleaned(false)
+    }
+  }, [])
+
   // API Call: Run All 3 Evaluation Pipelines
   const runEvaluation = useCallback(async () => {
     setRunningEval(true)
@@ -266,7 +324,7 @@ export function AppProvider({ children }) {
         ? evalLeakageCols.split(',').map(s => s.trim()).filter(Boolean)
         : null
 
-      const res = await fetch('/api/evaluation/run', {
+      const res = await fetch(`${API_BASE}/api/evaluation/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -294,6 +352,87 @@ export function AppProvider({ children }) {
     }
   }, [evalTargetCol, evalLeakageCols, testSize, randomState])
 
+  // ── Phase II: ML Modeling API calls ─────────────────────────────────
+
+  const fetchModelConfig = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/modeling/config`)
+      if (res.ok) {
+        const data = await res.json()
+        setModelConfig(data)
+        return data
+      }
+    } catch (err) {
+      console.error('Failed to fetch model config:', err)
+    }
+  }, [])
+
+  const trainModel = useCallback(async (modelType, options = {}) => {
+    setTrainingModels(prev => new Set([...prev, modelType]))
+    setModelingErrors(prev => ({ ...prev, [modelType]: null }))
+    try {
+      const res = await fetch(`${API_BASE}/api/modeling/train`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_type: modelType,
+          target_column: options.target_column ?? modelingTargetCol ?? undefined,
+          domain_profile: options.domain_profile ?? modelingDomainProfile ?? undefined,
+          test_size: options.testSize ?? 0.20,
+          random_state: options.randomState ?? 42,
+          class_weight: options.classWeight ?? 'balanced',
+          ...options,
+        }),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || `Training failed for ${modelType}.`)
+      }
+      const data = await res.json()
+      setModelingResults(prev => ({ ...prev, [modelType]: data }))
+      // Refresh config to update status badges
+      fetchModelConfig()
+      return data
+    } catch (err) {
+      const msg = err.message || `Training failed for ${modelType}.`
+      setModelingErrors(prev => ({ ...prev, [modelType]: msg }))
+      throw err
+    } finally {
+      setTrainingModels(prev => {
+        const next = new Set(prev)
+        next.delete(modelType)
+        return next
+      })
+    }
+  }, [fetchModelConfig])
+
+  const predictSingleRecord = useCallback(async (modelType, record = null, sampleIndex = null) => {
+    setPredictingModel(modelType)
+    setPredictionResult(null)
+    try {
+      const body = {}
+      if (record !== null) body.record = record
+      if (sampleIndex !== null) body.sample_index = sampleIndex
+      const res = await fetch(`${API_BASE}/api/modeling/predict/${modelType}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || 'Prediction failed.')
+      }
+      const data = await res.json()
+      setPredictionResult(data)
+      return data
+    } catch (err) {
+      console.error('Prediction error:', err)
+      throw err
+    } finally {
+      setPredictingModel(null)
+    }
+  }, [])
+
   // Reset all state for a new dataset
   const resetDataset = useCallback(() => {
     setFile(null)
@@ -305,6 +444,11 @@ export function AppProvider({ children }) {
     setUploadError(null)
     setPrepError(null)
     setEvalError(null)
+    // Reset Phase II
+    setModelingResults({})
+    setModelingErrors({})
+    setModelConfig(null)
+    setPredictionResult(null)
     navigateTo('/upload')
   }, [navigateTo])
 
@@ -340,6 +484,7 @@ export function AppProvider({ children }) {
     loadingEda,
     loadingDecision,
     executingPrep,
+    downloadingCleaned,
     prepError,
     runningEval,
     evalError,
@@ -355,13 +500,29 @@ export function AppProvider({ children }) {
     evalLeakageCols,
     setEvalLeakageCols,
 
-    // Actions
+    // Actions (Phase I)
     uploadAndAnalyze,
     fetchEdaAnalysis,
     fetchDecisionPlan,
     executePreprocessing,
+    downloadCleanedDataset,
     runEvaluation,
-    resetDataset
+    resetDataset,
+
+    // Phase II: ML Modeling
+    modelingTargetCol,
+    setModelingTargetCol,
+    modelingDomainProfile,
+    setModelingDomainProfile,
+    modelingResults,
+    trainingModels,
+    modelingErrors,
+    modelConfig,
+    predictionResult,
+    predictingModel,
+    fetchModelConfig,
+    trainModel,
+    predictSingleRecord,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

@@ -178,10 +178,10 @@ def run_minimal_pipeline(
 
     t_pred = time.perf_counter()
     y_pred = model.predict(X_te_scaled)
-    y_prob = model.predict_proba(X_te_scaled)[:, 1] if hasattr(model, "predict_proba") else None
+    y_prob = model.predict_proba(X_te_scaled) if hasattr(model, "predict_proba") else None
     predict_time = round(time.perf_counter() - t_pred, 4)
 
-    metrics = compute_metrics(y_test, y_pred, y_prob)
+    metrics = compute_metrics(y_test, y_pred, y_prob, labels=getattr(model, "classes_", None))
 
     return {
         "pipeline": "Minimal",
@@ -333,10 +333,10 @@ def run_fixed_pipeline(
 
     t_pred = time.perf_counter()
     y_pred = model.predict(X_te_scaled)
-    y_prob = model.predict_proba(X_te_scaled)[:, 1] if hasattr(model, "predict_proba") else None
+    y_prob = model.predict_proba(X_te_scaled) if hasattr(model, "predict_proba") else None
     predict_time = round(time.perf_counter() - t_pred, 4)
 
-    metrics = compute_metrics(y_test, y_pred, y_prob)
+    metrics = compute_metrics(y_test, y_pred, y_prob, labels=getattr(model, "classes_", None))
 
     return {
         "pipeline": "Fixed",
@@ -480,10 +480,10 @@ def run_hybrid_pipeline(
 
     t_pred = time.perf_counter()
     y_pred = model.predict(X_te_scaled)
-    y_prob = model.predict_proba(X_te_scaled)[:, 1] if hasattr(model, "predict_proba") else None
+    y_prob = model.predict_proba(X_te_scaled) if hasattr(model, "predict_proba") else None
     predict_time = round(time.perf_counter() - t_pred, 4)
 
-    metrics = compute_metrics(y_test, y_pred, y_prob)
+    metrics = compute_metrics(y_test, y_pred, y_prob, labels=getattr(model, "classes_", None))
 
     # Compile structured end-to-end decision trace
     decision_trace = []
@@ -555,7 +555,7 @@ def run_all_pipelines(
 
     # 1. Automatic target detection if target not specified or invalid
     target_detection_info = None
-    if not target_column or target_column == "auto" or target_column not in df.columns:
+    if not target_column or target_column == "auto":
         auto_cfg = AutoConfigEngine.generate_auto_config(df)
         target_info = auto_cfg["target"]
         target_column = target_info.get("column") or target_info.get("detected_column")
@@ -576,22 +576,66 @@ def run_all_pipelines(
         auto_cfg = AutoConfigEngine.generate_auto_config(df)
         feature_specs = auto_cfg.get("feature_specs", [])
 
-    y = df[target_column].copy()
-    leakage_set = set(leakage_columns or [])
-    drop_cols = {target_column} | leakage_set
-    X = df.drop(columns=[c for c in drop_cols if c in df.columns]).copy()
+    # 4. Target validation
+    if target_column not in df.columns:
+        raise ValueError(
+            f"Target column '{target_column}' does not exist in dataset. "
+            f"Available candidate columns: {list(df.columns[:10])}"
+        )
 
-    # Stratified split if classification target has >= 2 classes with >= 2 instances
-    stratify_opt = None
+    # Safe handling of missing target values
+    target_series = df[target_column]
+    valid_mask = target_series.notna()
+    if not valid_mask.all():
+        if valid_mask.sum() < 2:
+            raise ValueError(f"Target column '{target_column}' contains fewer than 2 valid non-null values.")
+        df = df.loc[valid_mask].copy()
+        y = df[target_column].copy()
+    else:
+        y = target_series.copy()
+
+    unique_classes = pd.Series(y).dropna().unique()
+    n_classes = len(unique_classes)
+    if n_classes < 2:
+        raise ValueError(
+            f"Target column '{target_column}' contains only {n_classes} distinct class(es): {list(unique_classes)}. "
+            f"Supervised classification requires at least 2 distinct classes."
+        )
+
+    classification_type = "binary" if n_classes == 2 else "multiclass"
+
+    # Rare class check for stratified holdout split
     val_counts = y.value_counts()
-    if len(val_counts) >= 2 and val_counts.min() >= 2:
-        stratify_opt = y
+    rare_classes = val_counts[val_counts < 2].index.tolist()
+    if rare_classes:
+        raise ValueError(
+            f"Target column '{target_column}' contains rare classes with fewer than 2 samples: {rare_classes}. "
+            f"Stratified holdout splitting requires at least 2 samples per class to represent each class in both train and test splits."
+        )
 
+    # Leakage column validation & isolation:
+    # Ensure leakage columns do not accidentally include target
+    leakage_set = set(leakage_columns or [])
+    if target_column in leakage_set:
+        leakage_set.remove(target_column)
+
+    # Exclude target and leakage from predictor feature matrix
+    drop_cols = {target_column} | leakage_set
+    feature_cols = [c for c in df.columns if c not in drop_cols]
+    if len(feature_cols) == 0:
+        raise ValueError(
+            f"No predictor features remain after removing target '{target_column}' "
+            f"and leakage columns {sorted(list(leakage_set))}. Please verify column selection."
+        )
+
+    X = df[feature_cols].copy()
+
+    # Stratified split
     X_train, X_test, y_train, y_test = train_test_split(
         X, y,
         test_size=test_size,
         random_state=random_state,
-        stratify=stratify_opt
+        stratify=y
     )
 
     split_info = {
@@ -602,15 +646,18 @@ def run_all_pipelines(
         "random_state": random_state,
         "original_feature_count": len(X.columns),
         "target_column": target_column,
+        "classification_type": classification_type,
+        "n_classes": n_classes,
+        "classes": [str(c) for c in sorted(unique_classes, key=lambda x: str(x))],
         "target_detection": target_detection_info,
-        "leakage_columns_excluded": list(leakage_set)
+        "leakage_columns_excluded": sorted(list(leakage_set))
     }
 
     results_minimal = run_minimal_pipeline(X_train, X_test, y_train, y_test)
     results_fixed = run_fixed_pipeline(X_train, X_test, y_train, y_test)
     results_hybrid = run_hybrid_pipeline(
         X_train, X_test, y_train, y_test,
-        leakage_columns=leakage_columns,
+        leakage_columns=list(leakage_set),
         feature_specs=feature_specs,
         skewness_threshold=skewness_threshold,
         outlier_threshold=outlier_threshold,
@@ -622,6 +669,9 @@ def run_all_pipelines(
     return {
         "status": "success",
         "split_info": split_info,
+        "classification_type": classification_type,
+        "n_classes": n_classes,
+        "target_column": target_column,
         "total_runtime_sec": total_orchestration_sec,
         "decision_trace": results_hybrid.get("decision_trace", []),
         "results": {

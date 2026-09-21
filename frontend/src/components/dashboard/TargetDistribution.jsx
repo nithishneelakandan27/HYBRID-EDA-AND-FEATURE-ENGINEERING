@@ -1,6 +1,14 @@
 import React from 'react'
 import { useApp } from '../../context/AppContext'
-import { ActivityIcon, InfoIcon } from '../common/Icons'
+import { ActivityIcon } from '../common/Icons'
+
+const PALETTE = [
+  { bg: 'bg-emerald-500', text: 'text-emerald-800', lightBg: 'bg-emerald-50/50', border: 'border-emerald-100', pctText: 'text-emerald-700' },
+  { bg: 'bg-rose-500', text: 'text-rose-800', lightBg: 'bg-rose-50/50', border: 'border-rose-100', pctText: 'text-rose-700' },
+  { bg: 'bg-indigo-500', text: 'text-indigo-800', lightBg: 'bg-indigo-50/50', border: 'border-indigo-100', pctText: 'text-indigo-700' },
+  { bg: 'bg-amber-500', text: 'text-amber-800', lightBg: 'bg-amber-50/50', border: 'border-amber-100', pctText: 'text-amber-700' },
+  { bg: 'bg-purple-500', text: 'text-purple-800', lightBg: 'bg-purple-50/50', border: 'border-purple-100', pctText: 'text-purple-700' },
+]
 
 export default function TargetDistribution() {
   const { datasetResult } = useApp()
@@ -9,7 +17,7 @@ export default function TargetDistribution() {
 
   const targetProfile = datasetResult.target_profile
 
-  if (!targetProfile) {
+  if (!targetProfile || !targetProfile.target_column) {
     return (
       <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm flex flex-col justify-between">
         <div>
@@ -17,55 +25,48 @@ export default function TargetDistribution() {
             Target Distribution
           </span>
           <p className="text-xs text-slate-500 mt-2">
-            Target column <code className="font-semibold text-slate-700">Late_delivery_risk</code> was not detected.
+            Target column was not detected. Please select a target column in ML Modeling.
           </p>
         </div>
       </div>
     )
   }
 
+  const targetCol = targetProfile.target_column
   const counts = targetProfile.class_counts || {}
   const percentages = targetProfile.class_percentages || {}
 
-  const onTimeCount = counts['0'] || 0
-  const lateCount = counts['1'] || 0
-  const onTimePct = percentages['0'] || 0
-  const latePct = percentages['1'] || 0
-  const total = onTimeCount + lateCount
+  const classes = Object.keys(counts)
+  const isBinary = classes.length === 2
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm flex flex-col justify-between">
       <div>
         <div className="flex items-center justify-between mb-4">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-            Target Distribution: Late_delivery_risk
+            Target Distribution: {targetCol}
           </span>
           <span className="text-xs font-mono font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full border border-teal-100">
-            Binary Classification Target
+            {isBinary ? 'Binary Classification Target' : `Multiclass Target (${classes.length} classes)`}
           </span>
-        </div>
-
-        {/* Dynamic Plain-English Explanation Banner */}
-        <div className="bg-indigo-50/70 border border-indigo-100/80 rounded-xl p-3.5 mb-5 flex items-start gap-2.5">
-          <ActivityIcon className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-          <p className="text-xs text-indigo-900 leading-relaxed">
-            <span className="font-semibold">About {latePct}% of shipments</span> were flagged with late delivery risk (<span className="font-semibold">{lateCount.toLocaleString()}</span> orders delayed vs <span className="font-semibold">{onTimeCount.toLocaleString()}</span> on-time).
-          </p>
         </div>
 
         {/* Proportional Stacked Bar */}
         <div className="space-y-2 mb-4">
           <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
-            <div
-              style={{ width: `${onTimePct}%` }}
-              className="bg-emerald-500 hover:bg-emerald-600 transition-all duration-500"
-              title={`Class 0 (On-Time / Early): ${onTimePct}%`}
-            />
-            <div
-              style={{ width: `${latePct}%` }}
-              className="bg-rose-500 hover:bg-rose-600 transition-all duration-500"
-              title={`Class 1 (Late Delivery Risk): ${latePct}%`}
-            />
+            {classes.map((cls, idx) => {
+              const pct = percentages[cls] || 0
+              const color = PALETTE[idx % PALETTE.length]
+              return (
+                <div
+                  key={cls}
+                  style={{ width: `${pct}%` }}
+                  className={`${color.bg} transition-all duration-500`}
+                  title={`Class ${cls}: ${pct}%`}
+                />
+              )
+            })}
           </div>
 
           <div className="flex justify-between items-center text-[11px] text-slate-500 font-mono">
@@ -76,37 +77,31 @@ export default function TargetDistribution() {
         </div>
 
         {/* Category Breakdown Cards */}
-        <div className="grid grid-cols-2 gap-3 mt-4">
-          <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3 text-left">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-              <span>Class 0: On-Time</span>
-            </div>
-            <div className="text-lg font-bold text-slate-900 mt-1">
-              {onTimeCount.toLocaleString()}
-            </div>
-            <div className="text-[11px] font-mono text-emerald-700 font-semibold mt-0.5">
-              {onTimePct}% of total orders
-            </div>
-          </div>
-
-          <div className="bg-rose-50/50 border border-rose-100 rounded-xl p-3 text-left">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-800">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-              <span>Class 1: Late Risk</span>
-            </div>
-            <div className="text-lg font-bold text-slate-900 mt-1">
-              {lateCount.toLocaleString()}
-            </div>
-            <div className="text-[11px] font-mono text-rose-700 font-semibold mt-0.5">
-              {latePct}% of total orders
-            </div>
-          </div>
+        <div className={`grid gap-3 mt-4 ${classes.length > 2 ? 'grid-cols-3 sm:grid-cols-3' : 'grid-cols-2'}`}>
+          {classes.map((cls, idx) => {
+            const count = counts[cls] || 0
+            const pct = percentages[cls] || 0
+            const color = PALETTE[idx % PALETTE.length]
+            return (
+              <div key={cls} className={`${color.lightBg} border ${color.border} rounded-xl p-3 text-left`}>
+                <div className={`flex items-center gap-1.5 text-xs font-semibold ${color.text} truncate`} title={`Class: ${cls}`}>
+                  <span className={`w-2.5 h-2.5 rounded-full ${color.bg} shrink-0`} />
+                  <span className="truncate">{cls}</span>
+                </div>
+                <div className="text-lg font-bold text-slate-900 mt-1">
+                  {count.toLocaleString()}
+                </div>
+                <div className={`text-[11px] font-mono ${color.pctText} font-semibold mt-0.5`}>
+                  {pct}% of total
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
 
       <p className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-400">
-        Stratified train/test split automatically preserves this {latePct}% to {onTimePct}% ratio to prevent class imbalance skew.
+        Stratified train/test split automatically preserves class distribution to prevent imbalance skew.
       </p>
     </div>
   )

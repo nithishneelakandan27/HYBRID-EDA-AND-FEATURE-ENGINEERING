@@ -12,6 +12,7 @@ import DataPreparation from './pages/DataPreparation'
 import FeatureEngineering from './pages/FeatureEngineering'
 import FeatureSelection from './pages/FeatureSelection'
 import ModelEvaluation from './pages/ModelEvaluation'
+import MLModeling from './pages/MLModeling'
 import HowItWorks from './pages/HowItWorks'
 import About from './pages/About'
 
@@ -38,6 +39,8 @@ function AppContent() {
         return <FeatureSelection />
       case '/evaluation':
         return <ModelEvaluation />
+      case '/modeling':
+        return <MLModeling />
       case '/how-it-works':
         return <HowItWorks />
       case '/about':

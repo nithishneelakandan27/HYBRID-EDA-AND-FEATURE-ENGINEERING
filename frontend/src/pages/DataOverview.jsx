@@ -14,7 +14,9 @@ import {
 } from '../components/common/Icons'
 
 export default function DataOverview() {
-  const { datasetResult, navigateTo } = useApp()
+  const { datasetResult, navigateTo, evalTargetCol, autoConfig } = useApp()
+  const detectedTarget = evalTargetCol || autoConfig?.target?.column || autoConfig?.target?.detected_column
+
   const [searchTerm, setSearchTerm] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [selectedColumn, setSelectedColumn] = useState(null)
@@ -133,7 +135,7 @@ export default function DataOverview() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredColumns.map((col, idx) => {
-                const isTarget = col.column_name.toLowerCase() === 'late_delivery_risk'
+                const isTarget = detectedTarget && col.column_name.toLowerCase() === detectedTarget.toLowerCase()
                 const isId = col.column_name.toLowerCase().includes('id') || col.column_name.toLowerCase().endsWith('_id')
                 const isDate = col.column_name.toLowerCase().includes('date')
                 const inferredRole = isTarget ? 'Target' : isId ? 'Identifier' : isDate ? 'Date / Timestamp' : 'Feature'

@@ -276,3 +276,71 @@ def test_23_api_preprocessing_execution_endpoint():
 
     res_session = client.get("/api/preprocessing/session")
     assert res_session.status_code == 200
+
+
+def test_24_export_cleaned_dataset_csv_download():
+    """Verify downloading Phase 1 Cleaned Dataset CSV returns 200, text/csv, and valid preprocessed columns."""
+    csv_data = (
+        "col_num,col_cat,Late_delivery_risk,Delivery Status\n"
+        "10.0,A,1,Shipping Complete\n"
+        "20.0,B,0,Advance Shipping\n"
+        "30.0,A,1,Late delivery\n"
+        "10.0,C,0,Shipping Complete\n"
+        "1000.0,B,1,Late delivery\n"
+        ",A,0,Shipping Complete\n"
+        "20.0,,1,Late delivery\n"
+        "15.0,B,0,Shipping Complete\n"
+        "25.0,C,1,Late delivery\n"
+        "35.0,A,0,Advance Shipping\n"
+    )
+    res_upload = client.post(
+        "/api/datasets/upload",
+        files={"file": ("export_test.csv", csv_data.encode("utf-8"), "text/csv")}
+    )
+    assert res_upload.status_code == 200
+
+    # Execute preprocessing
+    res_prep = client.post("/api/preprocessing/execute", json={"test_size": 0.20, "random_state": 42})
+    assert res_prep.status_code == 200
+
+    # Export cleaned dataset
+    res_export = client.get("/api/preprocessing/export-cleaned")
+    assert res_export.status_code == 200
+    assert "text/csv" in res_export.headers.get("content-type", "")
+    assert "cleaned_export_test.csv" in res_export.headers.get("content-disposition", "")
+
+    # Parse downloaded CSV
+    import io
+    downloaded_df = pd.read_csv(io.StringIO(res_export.text))
+
+    # Row count matches original (10 rows)
+    assert len(downloaded_df) == 10
+
+    # Target column is preserved
+    assert "Late_delivery_risk" in downloaded_df.columns
+
+    # Leakage column is excluded
+    assert "Delivery Status" not in downloaded_df.columns
+
+    # Missing numerical values in col_num are imputed (no NaNs)
+    assert not downloaded_df["col_num"].isnull().any()
+
+    # Numerical values are UNSCALED (original scale preserved, e.g. 10.0, 1000.0)
+    assert downloaded_df.loc[0, "col_num"] == 10.0
+    assert downloaded_df.loc[4, "col_num"] == 1000.0
+
+    # Categorical column is preserved as human-readable string (not one-hot/ordinal encoded)
+    assert "col_cat" in downloaded_df.columns
+    assert set(downloaded_df["col_cat"].dropna().unique()).issubset({"A", "B", "C"})
+    assert not downloaded_df["col_cat"].isnull().any()
+
+
+def test_25_export_cleaned_dataset_unexecuted_raises_400():
+    """Calling export-cleaned when no preprocessed cleaned dataset exists returns 400 error."""
+    import routers.preprocessing as router_prep
+    router_prep._latest_cleaned_df = None
+
+    res_export = client.get("/api/preprocessing/export-cleaned")
+    assert res_export.status_code == 400
+    assert "Cleaned dataset is unavailable" in res_export.json()["detail"]
+

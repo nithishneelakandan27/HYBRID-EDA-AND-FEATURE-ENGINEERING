@@ -457,3 +457,171 @@ def test_18_leakage_isolation_feature_selection():
     assert list(X_tr_out.columns) == list(X_te_out.columns)
 
 
+# ── Test 19: Multiclass benchmark with State target and City/Warehouse leakage ─
+
+def test_19_multiclass_target_state_and_leakage_exclusion():
+    rng = np.random.default_rng(42)
+    n = 300
+    states = ["NSW", "VIC", "QLD", "WA", "SA"]
+    df = pd.DataFrame({
+        "Order_ID": [f"ORD_{i}" for i in range(n)],
+        "City": rng.choice(["Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide"], n),
+        "Warehouse": rng.choice(["WH_North", "WH_South", "WH_East", "WH_West"], n),
+        "Category": rng.choice(["Produce", "Dairy", "Bakery", "Meat", "Pantry"], n),
+        "Sales": rng.uniform(10, 500, n),
+        "Quantity": rng.integers(1, 20, n).astype(float),
+        "Discount": rng.uniform(0, 0.3, n),
+        "Shipping_Cost": rng.uniform(5, 50, n),
+        "Order_Priority": rng.choice(["Low", "Medium", "High", "Critical"], n),
+        "State": rng.choice(states, n),
+    })
+
+    result = run_all_pipelines(
+        df=df,
+        target_column="State",
+        leakage_columns=["City", "Warehouse"],
+        test_size=0.20,
+        random_state=42
+    )
+
+    assert result["status"] == "success"
+    split_info = result["split_info"]
+    assert split_info["classification_type"] == "multiclass"
+    assert split_info["n_classes"] == 5
+    assert split_info["target_column"] == "State"
+    assert "City" in split_info["leakage_columns_excluded"]
+    assert "Warehouse" in split_info["leakage_columns_excluded"]
+
+    # Verify all 3 pipelines completed
+    for p in ["minimal", "fixed", "hybrid"]:
+        res_p = result["results"][p]
+        m = res_p["metrics"]
+        assert 0.0 <= m["accuracy"] <= 1.0
+        assert 0.0 <= m["precision"] <= 1.0
+        assert 0.0 <= m["recall"] <= 1.0
+        assert 0.0 <= m["f1"] <= 1.0
+        assert 0.0 <= m["precision_macro"] <= 1.0
+        assert 0.0 <= m["recall_macro"] <= 1.0
+        assert 0.0 <= m["f1_macro"] <= 1.0
+        assert 0.0 <= m["precision_weighted"] <= 1.0
+        assert 0.0 <= m["recall_weighted"] <= 1.0
+        assert 0.0 <= m["f1_weighted"] <= 1.0
+        assert m["confusion_matrix"] is not None
+        assert len(m["confusion_matrix"]) == 5
+
+        # Check leakage and target excluded
+        final_feats = res_p.get("feature_engineering_report", {})
+        assert "State" not in [str(c) for c in df.drop(columns=["State", "City", "Warehouse"]).columns if c == "State"]
+
+
+# ── Test 20: Binary benchmark backward compatibility ──────────────────────────
+
+def test_20_binary_target_late_delivery_risk():
+    rng = np.random.default_rng(42)
+    n = 250
+    df = pd.DataFrame({
+        "Sales": rng.uniform(50, 1000, n),
+        "Order_Profit_Per_Order": rng.uniform(-100, 300, n),
+        "Days_for_shipment_scheduled": rng.integers(1, 6, n).astype(float),
+        "Shipping_Mode": rng.choice(["Standard", "First Class", "Second Class"], n),
+        "Delivery_Status": rng.choice(["Advance", "Late", "On-Time"], n),
+        "Late_delivery_risk": rng.choice([0, 1], n, p=[0.45, 0.55]),
+    })
+
+    result = run_all_pipelines(
+        df=df,
+        target_column="Late_delivery_risk",
+        leakage_columns=["Delivery_Status"],
+        test_size=0.20,
+        random_state=42
+    )
+
+    assert result["status"] == "success"
+    assert result["split_info"]["classification_type"] == "binary"
+    assert result["split_info"]["n_classes"] == 2
+
+    for p in ["minimal", "fixed", "hybrid"]:
+        m = result["results"][p]["metrics"]
+        assert 0.0 <= m["accuracy"] <= 1.0
+        assert 0.0 <= m["precision"] <= 1.0
+        assert 0.0 <= m["recall"] <= 1.0
+        assert 0.0 <= m["f1"] <= 1.0
+        assert m["roc_auc"] is not None
+        assert 0.0 <= m["roc_auc"] <= 1.0
+
+
+# ── Test 21: Target column validation (missing column) ─────────────────────────
+
+def test_21_target_validation_missing_column():
+    df = make_generic_df()
+    with pytest.raises(ValueError, match="does not exist in dataset"):
+        run_all_pipelines(df, target_column="NonExistentTargetColumn_XYZ")
+
+
+# ── Test 22: Target column validation (single class) ───────────────────────────
+
+def test_22_target_validation_single_class():
+    df = make_generic_df()
+    df["constant_target"] = "ONLY_ONE_CLASS"
+    with pytest.raises(ValueError, match="at least 2 distinct classes"):
+        run_all_pipelines(df, target_column="constant_target")
+
+
+# ── Test 23: Rare class validation for stratified split ────────────────────────
+
+def test_23_target_validation_rare_class_error():
+    df = make_generic_df(n=200)
+    # Give one class only 1 sample
+    df["rare_target"] = ["Class_A"] * 100 + ["Class_B"] * 99 + ["Class_C"] * 1
+    with pytest.raises(ValueError, match="fewer than 2 samples"):
+        run_all_pipelines(df, target_column="rare_target")
+
+
+# ── Test 24: Target column missing values handled safely ───────────────────────
+
+def test_24_target_validation_missing_values_handled():
+    df = make_generic_df(n=300)
+    # Set 10 target values to NaN
+    df.loc[:9, "target"] = np.nan
+    result = run_all_pipelines(df, target_column="target")
+    assert result["status"] == "success"
+    # Total rows in split info must reflect non-null rows
+    assert result["split_info"]["total_rows"] == 290
+
+
+# ── Test 25: API endpoint with multiclass State target ─────────────────────────
+
+def test_25_api_multiclass_evaluation_endpoint():
+    from starlette.testclient import TestClient
+    from main import app
+    from services.ingestion import ingestion_service
+
+    rng = np.random.default_rng(42)
+    n = 200
+    df = pd.DataFrame({
+        "City": rng.choice(["Sydney", "Melbourne", "Brisbane"], n),
+        "Warehouse": rng.choice(["WH1", "WH2"], n),
+        "Sales": rng.uniform(10, 200, n),
+        "State": rng.choice(["NSW", "VIC", "QLD"], n),
+    })
+
+    # Ingest in service
+    ingestion_service._active_df = df
+    ingestion_service._filename = "Coles_SupplyChain_Dataset.csv"
+
+    client = TestClient(app)
+    response = client.post("/api/evaluation/run", json={
+        "target_column": "State",
+        "leakage_columns": ["City", "Warehouse"],
+        "test_size": 0.20,
+        "random_state": 42
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["split_info"]["classification_type"] == "multiclass"
+    assert data["split_info"]["n_classes"] == 3
+    assert data["results"]["hybrid"]["metrics"]["precision_macro"] is not None
+
+

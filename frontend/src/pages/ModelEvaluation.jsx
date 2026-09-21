@@ -64,6 +64,12 @@ export default function ModelEvaluation() {
   const splitInfo = evaluationResult?.split_info
   const paperReference = evaluationResult?.paper_reference
 
+  const isMulticlass =
+    splitInfo?.classification_type === 'multiclass' ||
+    (splitInfo?.n_classes > 2) ||
+    (results?.hybrid?.metrics?.classification_type === 'multiclass') ||
+    (results?.hybrid?.metrics?.n_classes > 2)
+
   const pipelines = ['minimal', 'fixed', 'hybrid']
   const pipeLabels = {
     minimal: 'Pipeline A: Minimal Baseline',
@@ -90,15 +96,31 @@ export default function ModelEvaluation() {
 
   const exportCsv = () => {
     if (!evaluationResult || !results) return
+    const metricColumns = isMulticlass
+      ? [
+          { key: 'accuracy', label: 'Accuracy' },
+          { key: 'precision_macro', label: 'Macro Precision' },
+          { key: 'recall_macro', label: 'Macro Recall' },
+          { key: 'f1_macro', label: 'Macro F1' },
+          { key: 'precision_weighted', label: 'Weighted Precision' },
+          { key: 'recall_weighted', label: 'Weighted Recall' },
+          { key: 'f1_weighted', label: 'Weighted F1' },
+          { key: 'roc_auc', label: 'ROC-AUC' },
+        ]
+      : [
+          { key: 'accuracy', label: 'Accuracy' },
+          { key: 'precision', label: 'Precision' },
+          { key: 'recall', label: 'Recall' },
+          { key: 'f1', label: 'F1 Score' },
+          { key: 'roc_auc', label: 'ROC-AUC' },
+        ]
+
+    const headers = ['Pipeline', ...metricColumns.map(m => m.label), 'Final Feature Count']
     const rows = [
-      ['Pipeline', 'Accuracy', 'Precision', 'Recall', 'F1 Score', 'ROC-AUC', 'Final Feature Count'],
+      headers,
       ...pipelines.map((p) => [
         pipeLabels[p],
-        results[p]?.metrics?.accuracy ?? 'N/A',
-        results[p]?.metrics?.precision ?? 'N/A',
-        results[p]?.metrics?.recall ?? 'N/A',
-        results[p]?.metrics?.f1 ?? 'N/A',
-        results[p]?.metrics?.roc_auc ?? 'N/A',
+        ...metricColumns.map(m => results[p]?.metrics?.[m.key] ?? 'N/A'),
         results[p]?.feature_counts?.final ?? 'N/A'
       ])
     ]
@@ -159,11 +181,16 @@ export default function ModelEvaluation() {
               Target Column
             </span>
             <div className="font-mono font-bold text-indigo-700 truncate">
-              {evalTargetCol || 'Late_delivery_risk'}
+              {splitInfo?.target_column || evalTargetCol || 'Late_delivery_risk'}
             </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Supervised binary classification label.
-            </p>
+            <div className="text-[11px] text-slate-500 mt-1 space-y-0.5">
+              <div>
+                Classification Type: <strong className="text-slate-700">{isMulticlass ? 'Multiclass' : (splitInfo ? 'Binary' : (evalTargetCol?.toLowerCase().includes('state') ? 'Multiclass' : 'Binary'))}</strong>
+              </div>
+              <div>
+                Number of Classes: <strong className="text-slate-700">{splitInfo?.n_classes || (isMulticlass ? 'N' : 2)}</strong>
+              </div>
+            </div>
           </div>
 
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
@@ -302,61 +329,115 @@ export default function ModelEvaluation() {
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              <MetricCard
-                title="Accuracy"
-                value={`${(results.hybrid.metrics.accuracy * 100).toFixed(2)}%`}
-                subtitle="Overall correct rate"
-                badge="High"
-                badgeStatus="success"
-                colorScheme="emerald"
-                tooltipText="Proportion of total shipments whose delivery outcome was correctly classified."
-              />
+            {isMulticlass ? (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <MetricCard
+                  title="Accuracy"
+                  value={`${(results.hybrid.metrics.accuracy * 100).toFixed(2)}%`}
+                  subtitle="Overall correct rate"
+                  badge="Overall"
+                  badgeStatus="success"
+                  colorScheme="emerald"
+                  tooltipText="Proportion of total samples whose multi-class category was correctly classified."
+                />
 
-              <MetricCard
-                title="Precision"
-                value={`${(results.hybrid.metrics.precision * 100).toFixed(2)}%`}
-                subtitle="True positive precision"
-                badge="High"
-                badgeStatus="success"
-                colorScheme="indigo"
-                tooltipText="When the model predicts late delivery risk, probability that shipment is genuinely late."
-              />
+                <MetricCard
+                  title="Macro Precision"
+                  value={`${(((results.hybrid.metrics.precision_macro ?? results.hybrid.metrics.precision) || 0) * 100).toFixed(2)}%`}
+                  subtitle="Unweighted mean per class"
+                  badge="Macro"
+                  badgeStatus="success"
+                  colorScheme="indigo"
+                  tooltipText="Unweighted average precision calculated independently across all classes."
+                />
 
-              <MetricCard
-                title="Recall"
-                value={`${(results.hybrid.metrics.recall * 100).toFixed(2)}%`}
-                subtitle="Detection sensitivity"
-                badge="Target"
-                badgeStatus="info"
-                colorScheme="teal"
-                tooltipText="Percentage of all genuinely delayed shipments captured by the model."
-              />
+                <MetricCard
+                  title="Macro Recall"
+                  value={`${(((results.hybrid.metrics.recall_macro ?? results.hybrid.metrics.recall) || 0) * 100).toFixed(2)}%`}
+                  subtitle="Detection sensitivity"
+                  badge="Macro"
+                  badgeStatus="info"
+                  colorScheme="teal"
+                  tooltipText="Unweighted average recall across all classes without favoring dominant classes."
+                />
 
-              <MetricCard
-                title="F1 Score"
-                value={`${(results.hybrid.metrics.f1 * 100).toFixed(2)}%`}
-                subtitle="Harmonic balance"
-                badge="Balanced"
-                badgeStatus="success"
-                colorScheme="blue"
-                tooltipText="Harmonic mean balancing precision and recall."
-              />
+                <MetricCard
+                  title="Macro F1 Score"
+                  value={`${(((results.hybrid.metrics.f1_macro ?? results.hybrid.metrics.f1) || 0) * 100).toFixed(2)}%`}
+                  subtitle="Macro harmonic balance"
+                  badge="Balanced"
+                  badgeStatus="success"
+                  colorScheme="blue"
+                  tooltipText="Harmonic mean of macro precision and recall across all classes."
+                />
 
-              <MetricCard
-                title="ROC-AUC"
-                value={
-                  results.hybrid.metrics.roc_auc != null
-                    ? results.hybrid.metrics.roc_auc.toFixed(4)
-                    : 'N/A'
-                }
-                subtitle="Discriminative power"
-                badge="Strong"
-                badgeStatus="purple"
-                colorScheme="purple"
-                tooltipText="Area Under ROC Curve quantifying probability ranking discrimination."
-              />
-            </div>
+                <MetricCard
+                  title="Weighted F1 Score"
+                  value={`${(((results.hybrid.metrics.f1_weighted ?? results.hybrid.metrics.f1) || 0) * 100).toFixed(2)}%`}
+                  subtitle="Frequency-weighted balance"
+                  badge="Weighted"
+                  badgeStatus="purple"
+                  colorScheme="purple"
+                  tooltipText="F1 score weighted by class support frequency in the test set."
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <MetricCard
+                  title="Accuracy"
+                  value={`${(results.hybrid.metrics.accuracy * 100).toFixed(2)}%`}
+                  subtitle="Overall correct rate"
+                  badge="High"
+                  badgeStatus="success"
+                  colorScheme="emerald"
+                  tooltipText="Proportion of total shipments whose delivery outcome was correctly classified."
+                />
+
+                <MetricCard
+                  title="Precision"
+                  value={`${(results.hybrid.metrics.precision * 100).toFixed(2)}%`}
+                  subtitle="True positive precision"
+                  badge="High"
+                  badgeStatus="success"
+                  colorScheme="indigo"
+                  tooltipText="When the model predicts late delivery risk, probability that shipment is genuinely late."
+                />
+
+                <MetricCard
+                  title="Recall"
+                  value={`${(results.hybrid.metrics.recall * 100).toFixed(2)}%`}
+                  subtitle="Detection sensitivity"
+                  badge="Target"
+                  badgeStatus="info"
+                  colorScheme="teal"
+                  tooltipText="Percentage of all genuinely delayed shipments captured by the model."
+                />
+
+                <MetricCard
+                  title="F1 Score"
+                  value={`${(results.hybrid.metrics.f1 * 100).toFixed(2)}%`}
+                  subtitle="Harmonic balance"
+                  badge="Balanced"
+                  badgeStatus="success"
+                  colorScheme="blue"
+                  tooltipText="Harmonic mean balancing precision and recall."
+                />
+
+                <MetricCard
+                  title="ROC-AUC"
+                  value={
+                    results.hybrid.metrics.roc_auc != null
+                      ? results.hybrid.metrics.roc_auc.toFixed(4)
+                      : 'N/A'
+                  }
+                  subtitle="Discriminative power"
+                  badge="Strong"
+                  badgeStatus="purple"
+                  colorScheme="purple"
+                  tooltipText="Area Under ROC Curve quantifying probability ranking discrimination."
+                />
+              </div>
+            )}
           </div>
 
           {/* Pipeline Benchmark Comparison Cards */}
@@ -408,23 +489,29 @@ export default function ModelEvaluation() {
                         </div>
 
                         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/60 text-center">
-                          <span className="text-[10px] text-slate-400 uppercase font-semibold">Precision</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-semibold">
+                            {isMulticlass ? 'Macro Prec' : 'Precision'}
+                          </span>
                           <div className="text-base font-bold text-indigo-600 mt-0.5 font-mono">
-                            {(m.precision * 100).toFixed(2)}%
+                            {(((isMulticlass ? m.precision_macro : m.precision) ?? m.precision) * 100).toFixed(2)}%
                           </div>
                         </div>
 
                         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/60 text-center">
-                          <span className="text-[10px] text-slate-400 uppercase font-semibold">Recall</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-semibold">
+                            {isMulticlass ? 'Macro Rec' : 'Recall'}
+                          </span>
                           <div className="text-base font-bold text-teal-600 mt-0.5 font-mono">
-                            {(m.recall * 100).toFixed(2)}%
+                            {(((isMulticlass ? m.recall_macro : m.recall) ?? m.recall) * 100).toFixed(2)}%
                           </div>
                         </div>
 
                         <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/60 text-center">
-                          <span className="text-[10px] text-slate-400 uppercase font-semibold">F1 Score</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-semibold">
+                            {isMulticlass ? 'Macro F1' : 'F1 Score'}
+                          </span>
                           <div className="text-base font-bold text-slate-900 mt-0.5 font-mono">
-                            {(m.f1 * 100).toFixed(2)}%
+                            {(((isMulticlass ? m.f1_macro : m.f1) ?? m.f1) * 100).toFixed(2)}%
                           </div>
                         </div>
                       </div>
@@ -456,10 +543,28 @@ export default function ModelEvaluation() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {['accuracy', 'precision', 'recall', 'f1', 'roc_auc'].map((k) => (
+                  {(isMulticlass
+                    ? [
+                        { key: 'accuracy', label: 'Accuracy' },
+                        { key: 'precision_macro', label: 'Macro Precision' },
+                        { key: 'recall_macro', label: 'Macro Recall' },
+                        { key: 'f1_macro', label: 'Macro F1-Score' },
+                        { key: 'precision_weighted', label: 'Weighted Precision' },
+                        { key: 'recall_weighted', label: 'Weighted Recall' },
+                        { key: 'f1_weighted', label: 'Weighted F1-Score' },
+                        { key: 'roc_auc', label: 'ROC-AUC (OVR)' },
+                      ]
+                    : [
+                        { key: 'accuracy', label: 'Accuracy' },
+                        { key: 'precision', label: 'Precision' },
+                        { key: 'recall', label: 'Recall' },
+                        { key: 'f1', label: 'F1 Score' },
+                        { key: 'roc_auc', label: 'ROC-AUC' },
+                      ]
+                  ).map(({ key: k, label }) => (
                     <tr key={k} className="hover:bg-slate-50">
-                      <td className="py-2.5 px-3 font-sans font-semibold text-slate-800 uppercase">
-                        {k.replace('_', '-')}
+                      <td className="py-2.5 px-3 font-sans font-semibold text-slate-800">
+                        {label}
                       </td>
                       <td className="py-2.5 px-3 text-slate-600">
                         {results.minimal.metrics[k] != null ? results.minimal.metrics[k].toFixed(4) : 'N/A'}
@@ -499,9 +604,15 @@ export default function ModelEvaluation() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-slate-700 leading-relaxed">
               <div className="bg-white/80 p-4 rounded-2xl border border-indigo-100">
                 <span className="font-bold text-indigo-900 block mb-1">
-                  1. High Precision ({((results.hybrid.metrics.precision || 0) * 100).toFixed(1)}%) Prevents False Alarms
+                  1. {isMulticlass
+                    ? `Macro Precision (${(((results.hybrid.metrics.precision_macro ?? results.hybrid.metrics.precision) || 0) * 100).toFixed(1)}%) Across ${splitInfo?.n_classes || 'Multiple'} Classes`
+                    : `High Precision (${((results.hybrid.metrics.precision || 0) * 100).toFixed(1)}%) Prevents False Alarms`}
                 </span>
-                When the hybrid model flags an order as "High Late Delivery Risk", it is correct more than {Math.floor((results.hybrid.metrics.precision || 0) * 100)}% of the time. Logistics teams can dispatch expedited carrier interventions without wasting expensive freight budgets on orders that were going to arrive on time anyway.
+                {isMulticlass ? (
+                  <>When the hybrid model predicts a category for <span className="font-mono font-semibold text-indigo-700">{splitInfo?.target_column || evalTargetCol}</span>, it achieves balanced precision across all {splitInfo?.n_classes || 'multiple'} classes without favoring majority classes. Operational routing decisions remain consistent across categories.</>
+                ) : (
+                  <>When the hybrid model flags an order as "High Late Delivery Risk", it is correct more than {Math.floor((results.hybrid.metrics.precision || 0) * 100)}% of the time. Logistics teams can dispatch expedited carrier interventions without wasting expensive freight budgets on orders that were going to arrive on time anyway.</>
+                )}
               </div>
 
               <div className="bg-white/80 p-4 rounded-2xl border border-indigo-100">

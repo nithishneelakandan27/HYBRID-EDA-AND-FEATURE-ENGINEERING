@@ -28,7 +28,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routers import dataset, eda, decision, preprocessing, evaluation
+from routers import dataset, eda, decision, preprocessing, evaluation, modeling
 
 load_dotenv()
 
@@ -54,6 +54,18 @@ app.include_router(eda.router)
 app.include_router(decision.router)
 app.include_router(preprocessing.router)
 app.include_router(evaluation.router)
+app.include_router(modeling.router)
+
+
+@app.get("/")
+async def root():
+    return {
+        "status": "online",
+        "service": "Hybrid EDA & Feature Engineering Supply Chain API",
+        "docs": "/docs",
+        "health": "/api/health",
+        "frontend_dashboard": "http://localhost:5173"
+    }
 
 
 @app.get("/api/health")

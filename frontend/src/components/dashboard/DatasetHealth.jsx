@@ -124,7 +124,7 @@ export default function DatasetHealth() {
             <div className="flex items-start gap-2">
               <CheckIcon className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <span className="text-slate-700">
-                Supervised classification target <code className="font-semibold text-slate-800">Late_delivery_risk</code> detected.
+                Supervised classification target <code className="font-semibold text-slate-800">{datasetResult.target_profile.target_column}</code> detected.
               </span>
             </div>
           ) : (

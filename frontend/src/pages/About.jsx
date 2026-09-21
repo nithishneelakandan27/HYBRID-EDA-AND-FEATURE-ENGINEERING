@@ -59,8 +59,8 @@ export default function About() {
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 text-xs">
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/70">
-              <span className="font-bold text-slate-800 block">Target Variable</span>
-              <span className="text-slate-500 font-mono mt-1 block">Late_delivery_risk (Binary)</span>
+              <span className="font-bold text-slate-800 block">Primary Research Target</span>
+              <span className="text-slate-500 font-mono mt-1 block">Late_delivery_risk (Dataset-Agnostic)</span>
             </div>
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/70">
               <span className="font-bold text-slate-800 block">Dimensions</span>

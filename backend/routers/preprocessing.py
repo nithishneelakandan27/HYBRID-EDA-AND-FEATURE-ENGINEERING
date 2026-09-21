@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException, status, Body
+from fastapi import APIRouter, HTTPException, status, Body, Response
+from fastapi.responses import StreamingResponse
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 import pandas as pd
 import numpy as np
+import io
+import os
 from sklearn.model_selection import train_test_split
 
 from services.ingestion import ingestion_service
@@ -13,14 +16,17 @@ router = APIRouter(prefix="/api/preprocessing", tags=["Hybrid Preprocessing"])
 class PreprocessingRequest(BaseModel):
     test_size: float = Field(0.20, ge=0.05, le=0.5, description="Test split proportion (default: 0.20)")
     random_state: int = Field(42, description="Random seed for reproducibility")
-    target_column: Optional[str] = Field(None, description="Target column name (e.g. Late_delivery_risk)")
+    target_column: Optional[str] = Field(None, description="Target column name")
     leakage_columns: Optional[List[str]] = Field(None, description="Custom leakage column names to exclude")
     skewness_threshold: float = Field(1.0, description="Skewness threshold for mean vs median and log1p")
     outlier_threshold: float = Field(0.02, description="Outlier percentage threshold for RobustScaler")
     cardinality_threshold: int = Field(15, description="Cardinality threshold for OneHot vs Ordinal encoding")
 
-# In-memory storage for active preprocessing session
+# In-memory storage for active preprocessing session and preprocessed cleaned DataFrame
 _latest_preprocessed_session: Optional[Dict[str, Any]] = None
+_latest_cleaned_df: Optional[pd.DataFrame] = None
+_latest_cleaned_filename: str = "cleaned_dataset.csv"
+
 
 @router.post("/execute")
 async def execute_preprocessing(request: PreprocessingRequest = Body(default_factory=PreprocessingRequest)):
@@ -29,9 +35,10 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
     1. Splits active dataset into train & test (80:20 stratified if target exists).
     2. Fits preprocessing parameters STRICTLY on training data only.
     3. Transforms both train and test sets.
-    4. Returns structured metadata, feature names, and execution summary.
+    4. Generates and stores the complete Phase 1 Cleaned Dataset.
+    5. Returns structured metadata, feature names, and execution summary.
     """
-    global _latest_preprocessed_session
+    global _latest_preprocessed_session, _latest_cleaned_df, _latest_cleaned_filename
 
     df = ingestion_service.get_active_dataframe()
     if df is None:
@@ -57,7 +64,6 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
             y = df[target_col].copy()
             X = df.drop(columns=[target_col]).copy()
             
-            # Use stratified split if classes have at least 2 instances
             stratify_opt = None
             val_counts = y.value_counts()
             if len(val_counts) >= 2 and val_counts.min() >= 2:
@@ -97,6 +103,21 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
         X_train_trans = preprocessor.transform(X_train)
         X_test_trans = preprocessor.transform(X_test)
 
+        # 5. Generate Phase 1 Cleaned Dataset (imputed unscaled features + target column)
+        cleaned_df = preprocessor.transform_cleaned(X)
+        if target_col and target_col in df.columns:
+            cleaned_df[target_col] = df[target_col].values
+
+        # Re-order columns to match original dataset column order
+        orig_cols = [c for c in df.columns if c in cleaned_df.columns]
+        extra_cols = [c for c in cleaned_df.columns if c not in orig_cols]
+        cleaned_df = cleaned_df[orig_cols + extra_cols].copy()
+
+        _latest_cleaned_df = cleaned_df
+        orig_filename = ingestion_service.get_filename() or "dataset.csv"
+        base_name, _ = os.path.splitext(orig_filename)
+        _latest_cleaned_filename = f"cleaned_{base_name}.csv"
+
         meta = preprocessor.get_metadata()
 
         # Preview of first 5 rows (rounded)
@@ -104,6 +125,7 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
 
         session_result = {
             "filename": ingestion_service.get_filename(),
+            "cleaned_filename": _latest_cleaned_filename,
             "status": "success",
             "split_info": {
                 "total_rows": total_rows,
@@ -128,7 +150,8 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
             "metadata": meta,
             "feature_names": meta["feature_names"],
             "decision_trace": meta.get("decision_trace", []),
-            "preview": preview_data
+            "preview": preview_data,
+            "cleaned_dataset_available": True
         }
 
         _latest_preprocessed_session = session_result
@@ -139,6 +162,7 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error executing hybrid preprocessing pipeline: {str(e)}"
         )
+
 
 @router.get("/session")
 async def get_latest_preprocessing_session():
@@ -151,3 +175,29 @@ async def get_latest_preprocessing_session():
             detail="No preprocessing pipeline has been executed yet."
         )
     return _latest_preprocessed_session
+
+
+@router.get("/export-cleaned")
+async def export_cleaned_dataset():
+    """
+    Exports the Cleaned Dataset generated by Phase 1 Data Cleaning & Preprocessing as a CSV file.
+    Must be called after executing the preprocessing pipeline.
+    """
+    if _latest_cleaned_df is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cleaned dataset is unavailable. Please execute the Phase 1 Data Preparation preprocessing pipeline first."
+        )
+
+    csv_buffer = io.StringIO()
+    _latest_cleaned_df.to_csv(csv_buffer, index=False)
+    csv_bytes = csv_buffer.getvalue().encode("utf-8")
+
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_latest_cleaned_filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )

@@ -24,6 +24,12 @@ ID_KEYWORDS = [
     r"code$", r"number$", r"num$", r"url", r"image", r"street", r"address"
 ]
 
+GEO_KEYWORDS = [
+    r"state", r"city", r"warehouse", r"country", r"region", r"zipcode", r"zip_code",
+    r"postal_code", r"latitude", r"longitude", r"street", r"address", r"market",
+    r"territory", r"store", r"department"
+]
+
 DOMAIN_LEAKAGE_COLUMNS = {
     "delivery status": "Post-event target leakage: contains outcome delivery status recorded after shipment.",
     "days for shipping (real)": "Post-event leakage: actual shipping duration measured after order delivery.",
@@ -49,6 +55,7 @@ class AutoConfigEngine:
         - Medium confidence: select with warning.
         - Low confidence: ask user (target is null, candidates returned).
         - Never blindly select IDs or obvious identifier columns as target.
+        - Never select geographical/spatial columns as target.
         """
         if df is None or df.empty or df.shape[1] == 0:
             return {
@@ -75,6 +82,15 @@ class AutoConfigEngine:
             unique_count = int(clean_series.nunique())
             if unique_count <= 1:
                 continue  # Constant column
+
+            # Check if geographical column
+            is_geo = False
+            for geo_kw in GEO_KEYWORDS:
+                if re.search(r'\b' + re.escape(geo_kw) + r'\b', col_lower) or col_lower == geo_kw:
+                    is_geo = True
+                    break
+            if is_geo:
+                continue  # Never select geographical/spatial column as target
 
             # Check if obvious ID
             cardinality_ratio = unique_count / num_rows if num_rows > 0 else 0
