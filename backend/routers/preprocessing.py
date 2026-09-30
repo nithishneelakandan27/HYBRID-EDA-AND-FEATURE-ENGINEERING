@@ -10,6 +10,7 @@ from sklearn.model_selection import train_test_split
 
 from services.ingestion import ingestion_service
 from preprocessing.pipeline import HybridPreprocessor
+from preprocessing.comparison import compute_preprocessing_comparison
 
 router = APIRouter(prefix="/api/preprocessing", tags=["Hybrid Preprocessing"])
 
@@ -22,10 +23,11 @@ class PreprocessingRequest(BaseModel):
     outlier_threshold: float = Field(0.02, description="Outlier percentage threshold for RobustScaler")
     cardinality_threshold: int = Field(15, description="Cardinality threshold for OneHot vs Ordinal encoding")
 
-# In-memory storage for active preprocessing session and preprocessed cleaned DataFrame
+# In-memory storage for active preprocessing session, preprocessed cleaned DataFrame, and comparison
 _latest_preprocessed_session: Optional[Dict[str, Any]] = None
 _latest_cleaned_df: Optional[pd.DataFrame] = None
 _latest_cleaned_filename: str = "cleaned_dataset.csv"
+_latest_comparison: Optional[Dict[str, Any]] = None
 
 
 @router.post("/execute")
@@ -38,7 +40,7 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
     4. Generates and stores the complete Phase 1 Cleaned Dataset.
     5. Returns structured metadata, feature names, and execution summary.
     """
-    global _latest_preprocessed_session, _latest_cleaned_df, _latest_cleaned_filename
+    global _latest_preprocessed_session, _latest_cleaned_df, _latest_cleaned_filename, _latest_comparison
 
     df = ingestion_service.get_active_dataframe()
     if df is None:
@@ -123,6 +125,10 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
         # Preview of first 5 rows (rounded)
         preview_data = X_train_trans.head(5).round(4).to_dict(orient="records")
 
+        # Compute Before vs After empirical comparison statistics and distributions
+        comparison_data = compute_preprocessing_comparison(df, cleaned_df, preprocessor)
+        _latest_comparison = comparison_data
+
         session_result = {
             "filename": ingestion_service.get_filename(),
             "cleaned_filename": _latest_cleaned_filename,
@@ -151,7 +157,8 @@ async def execute_preprocessing(request: PreprocessingRequest = Body(default_fac
             "feature_names": meta["feature_names"],
             "decision_trace": meta.get("decision_trace", []),
             "preview": preview_data,
-            "cleaned_dataset_available": True
+            "cleaned_dataset_available": True,
+            "comparison": comparison_data
         }
 
         _latest_preprocessed_session = session_result
@@ -175,6 +182,26 @@ async def get_latest_preprocessing_session():
             detail="No preprocessing pipeline has been executed yet."
         )
     return _latest_preprocessed_session
+
+
+@router.get("/comparison")
+async def get_preprocessing_comparison():
+    """
+    Returns side-by-side Before vs After preprocessing empirical comparison and distribution data.
+    """
+    global _latest_comparison
+    if _latest_comparison is not None:
+        return {"has_preprocessed": True, "comparison": _latest_comparison}
+
+    df = ingestion_service.get_active_dataframe()
+    if df is None:
+        return {"has_preprocessed": False, "message": "No dataset ingested."}
+
+    if _latest_cleaned_df is None:
+        return {"has_preprocessed": False, "message": "Preprocessing has not been executed yet."}
+
+    _latest_comparison = compute_preprocessing_comparison(df, _latest_cleaned_df)
+    return {"has_preprocessed": True, "comparison": _latest_comparison}
 
 
 @router.get("/export-cleaned")

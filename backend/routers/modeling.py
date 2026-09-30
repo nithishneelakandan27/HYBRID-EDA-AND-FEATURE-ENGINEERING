@@ -66,17 +66,19 @@ import math
 
 def clean_nans(obj: Any) -> Any:
     """Recursively replaces NaN, +inf, -inf, and numpy types with JSON-compliant Python types."""
-    if isinstance(obj, float):
-        if math.isnan(obj) or math.isinf(obj):
-            return None
-        return obj
-    elif isinstance(obj, (np.floating, np.integer)):
-        val = obj.item()
-        if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+    if isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, (np.floating, float)):
+        val = float(obj)
+        if math.isnan(val) or math.isinf(val):
             return None
         return val
+    elif isinstance(obj, (np.integer, int)):
+        return int(obj)
     elif isinstance(obj, np.ndarray):
         return [clean_nans(x) for x in obj.tolist()]
+    elif hasattr(obj, "item") and callable(obj.item):
+        return clean_nans(obj.item())
     elif isinstance(obj, dict):
         return {str(k): clean_nans(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):

@@ -684,13 +684,20 @@ def _build_sample_records(
             else:
                 prob_late = round(float(y_prob_all[i, 0]), 4)
 
+        true_val = true_orig.item() if hasattr(true_orig, "item") else true_orig
+        pred_val = pred_orig.item() if hasattr(pred_orig, "item") else pred_orig
+        if isinstance(true_val, (np.integer, int)):
+            true_val = int(true_val)
+        if isinstance(pred_val, (np.integer, int)):
+            pred_val = int(pred_val)
+
         records.append({
-            "index": i,
-            "true_class": true_orig,
-            "true_label": class_labels.get(true_orig, str(true_orig)),
-            "predicted_class": pred_orig,
-            "predicted_label": class_labels.get(pred_orig, str(pred_orig)),
-            "correct": true_orig == pred_orig,
+            "index": int(i),
+            "true_class": true_val,
+            "true_label": class_labels.get(true_val, class_labels.get(true_orig, str(true_val))),
+            "predicted_class": pred_val,
+            "predicted_label": class_labels.get(pred_val, class_labels.get(pred_orig, str(pred_val))),
+            "correct": bool(true_val == pred_val),
             "probability_late": prob_late,
             "features": {
                 k: (float(v) if isinstance(v, (np.floating, float)) else

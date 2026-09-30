@@ -509,6 +509,114 @@ function PredictionExplorer({ result, modelType, onPredict, predResult, isPredic
           )}
         </div>
       )}
+
+      {/* ── Prediction Preview Table: Actual vs Predicted across test records ── */}
+      {samples.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs mt-4">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                Prediction Preview Table (Actual vs Predicted)
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                Ground Truth vs Model Predictions on representative unseen test records.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
+                {samples.filter(s => s.correct).length} / {samples.length} Correct ({((samples.filter(s => s.correct).length / samples.length) * 100).toFixed(0)}%)
+              </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/70 text-slate-600 border-b border-slate-200 font-semibold">
+                  <th className="py-2.5 px-3">Record</th>
+                  <th className="py-2.5 px-3">Actual (Ground Truth)</th>
+                  <th className="py-2.5 px-3">Model Prediction</th>
+                  <th className="py-2.5 px-3">Target Probability</th>
+                  <th className="py-2.5 px-3">Result</th>
+                  <th className="py-2.5 px-3">Key Features Sample</th>
+                  <th className="py-2.5 px-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-mono">
+                {samples.map((s, idx) => {
+                  const isSelected = selectedIdx === idx
+                  return (
+                    <tr
+                      key={idx}
+                      className={`transition-colors cursor-pointer ${
+                        isSelected ? 'bg-indigo-50/70' : 'hover:bg-slate-50/80'
+                      }`}
+                      onClick={() => setSelectedIdx(idx)}
+                    >
+                      <td className="py-2.5 px-3 text-slate-500 font-bold">
+                        #{idx + 1}
+                      </td>
+                      <td className="py-2.5 px-3 font-sans font-semibold text-slate-900">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-slate-400" />
+                          {s.true_label}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 font-sans font-semibold">
+                        <span className={`inline-flex items-center gap-1.5 ${s.correct ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          <span className={`w-2 h-2 rounded-full ${s.correct ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                          {s.predicted_label}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {s.probability_late != null ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-14 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-indigo-500 rounded-full"
+                                style={{ width: `${s.probability_late * 100}%` }}
+                              />
+                            </div>
+                            <span className="text-slate-700 font-mono">{(s.probability_late * 100).toFixed(1)}%</span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 font-sans">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            s.correct
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-rose-50 text-rose-700 border border-rose-200'
+                          }`}
+                        >
+                          {s.correct ? '✓ Match' : '✗ Error'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 font-sans text-slate-500 text-[11px] truncate max-w-[200px]" title={Object.entries(s.features).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' | ')}>
+                        {Object.entries(s.features).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' | ')}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedIdx(idx)
+                            onPredict(modelType, null, idx)
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer"
+                        >
+                          Test Live
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -544,28 +652,54 @@ export default function MLModeling() {
   }, [fetchModelConfig])
 
   // Active target column display
+  const allColumns = modelConfig?.columns || []
+  const lateCol = allColumns.find(c => c.toLowerCase() === 'late_delivery_risk')
   const detectedTarget = modelConfig?.target_candidates?.column || modelConfig?.target_candidates?.detected_column || null
+  const defaultTarget = lateCol || detectedTarget
   const GEO_COLS = ['state', 'city', 'warehouse', 'country', 'region', 'zipcode', 'zip_code', 'postal_code', 'latitude', 'longitude', 'street', 'address', 'market', 'territory', 'store', 'department']
   const isTargetGeo = modelingTargetCol && GEO_COLS.some(g => modelingTargetCol.toLowerCase().includes(g))
 
-  const effectiveTarget = (!isTargetGeo && modelingTargetCol) ? modelingTargetCol : detectedTarget
+  const effectiveTarget = (!isTargetGeo && modelingTargetCol) ? modelingTargetCol : defaultTarget
   const activeTarget = effectiveTarget || 'Auto-detect'
   const targetCandidates = modelConfig?.target_candidates?.candidate_columns || []
-  const allColumns = modelConfig?.columns || []
   const domainProfiles = modelConfig?.domain_profiles || []
   const activeDomain = modelingDomainProfile || modelConfig?.detected_domain || 'general'
+
+  const [trainingAll, setTrainingAll] = useState(false)
+  const isAnyTraining = trainingModels.size > 0 || trainingAll
 
   const handleTrain = useCallback(async (modelType) => {
     try {
       await trainModel(modelType, {
         target_column: effectiveTarget || undefined,
         domain_profile: modelingDomainProfile || undefined,
+        test_size: 0.20,
+        random_state: 42,
       })
       setSelectedModel(modelType)
       setActiveTab('metrics')
     } catch (err) {
       // Error stored in modelingErrors
     }
+  }, [trainModel, effectiveTarget, modelingDomainProfile])
+
+  const handleTrainAll = useCallback(async () => {
+    setTrainingAll(true)
+    const models = ['logistic_regression', 'decision_tree', 'random_forest', 'gradient_boosting']
+    for (const mt of models) {
+      try {
+        await trainModel(mt, {
+          target_column: effectiveTarget || undefined,
+          domain_profile: modelingDomainProfile || undefined,
+          test_size: 0.20,
+          random_state: 42,
+        })
+      } catch (err) {
+        console.error(`Failed training ${mt}:`, err)
+      }
+    }
+    setTrainingAll(false)
+    setShowComparison(true)
   }, [trainModel, effectiveTarget, modelingDomainProfile])
 
   const currentResult = modelingResults[selectedModel]
@@ -658,6 +792,23 @@ export default function MLModeling() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleTrainAll}
+            disabled={isAnyTraining}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+          >
+            {trainingAll ? (
+              <>
+                <RefreshCwIcon className="w-3.5 h-3.5 animate-spin" />
+                <span>Training All 4 Models…</span>
+              </>
+            ) : (
+              <>
+                <SparklesIcon className="w-3.5 h-3.5" />
+                <span>Train All 4 Models</span>
+              </>
+            )}
+          </button>
           {hasAnyTrained && (
             <>
               <button
@@ -929,6 +1080,135 @@ export default function MLModeling() {
                   ))}
                 </div>
               </div>
+
+              {/* Target & Class Imbalance Distribution */}
+              {currentResult.target_info && (
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                      <TargetIcon className="w-3.5 h-3.5 text-indigo-600" />
+                      Target Column & Class Imbalance Distribution
+                    </h3>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md font-mono bg-indigo-50 border border-indigo-200 text-indigo-700">
+                      {currentResult.target_info.classification_type}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-white p-3 rounded-lg border border-slate-200">
+                      <div className="text-[11px] text-slate-500 font-medium">Target Column</div>
+                      <div className="text-sm font-bold text-slate-900 font-mono mt-0.5 truncate">
+                        {currentResult.target_info.target_column}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        Domain: {currentResult.domain_profile || 'supply_chain'}
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-slate-200">
+                      <div className="text-[11px] text-slate-500 font-medium">Training Class Split</div>
+                      <div className="flex items-center justify-between text-xs mt-1 font-mono">
+                        {Object.entries(currentResult.target_info.train_class_distribution || {}).map(([c, count]) => (
+                          <div key={c} className="flex flex-col">
+                            <span className="text-[10px] text-slate-400">Class {c}</span>
+                            <span className="font-bold text-slate-800">{count.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mt-2 flex">
+                        {(() => {
+                          const dist = Object.values(currentResult.target_info.train_class_distribution || {})
+                          const total = dist.reduce((a, b) => a + b, 0)
+                          if (total === 0) return null
+                          const p0 = (dist[0] / total) * 100
+                          return (
+                            <>
+                              <div className="bg-slate-400 h-full" style={{ width: `${p0}%` }} title={`Class 0: ${p0.toFixed(1)}%`} />
+                              <div className="bg-indigo-500 h-full flex-1" title={`Class 1: ${(100 - p0).toFixed(1)}%`} />
+                            </>
+                          )
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-slate-200">
+                      <div className="text-[11px] text-slate-500 font-medium">Test Class Split (Unseen)</div>
+                      <div className="flex items-center justify-between text-xs mt-1 font-mono">
+                        {Object.entries(currentResult.target_info.test_class_distribution || {}).map(([c, count]) => (
+                          <div key={c} className="flex flex-col">
+                            <span className="text-[10px] text-slate-400">Class {c}</span>
+                            <span className="font-bold text-slate-800">{count.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mt-2 flex">
+                        {(() => {
+                          const dist = Object.values(currentResult.target_info.test_class_distribution || {})
+                          const total = dist.reduce((a, b) => a + b, 0)
+                          if (total === 0) return null
+                          const p0 = (dist[0] / total) * 100
+                          return (
+                            <>
+                              <div className="bg-slate-400 h-full" style={{ width: `${p0}%` }} title={`Class 0: ${p0.toFixed(1)}%`} />
+                              <div className="bg-indigo-500 h-full flex-1" title={`Class 1: ${(100 - p0).toFixed(1)}%`} />
+                            </>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Classification Report Table */}
+              {currentResult.classification_report && (
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                  <h3 className="text-xs font-semibold text-slate-700 mb-3 flex items-center gap-1.5">
+                    <ActivityIcon className="w-3.5 h-3.5 text-slate-500" />
+                    Classification Report (Per-Class Precision, Recall & F1)
+                  </h3>
+                  <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                          <th className="py-2.5 px-3">Class / Average</th>
+                          <th className="py-2.5 px-3 text-right">Precision</th>
+                          <th className="py-2.5 px-3 text-right">Recall</th>
+                          <th className="py-2.5 px-3 text-right">F1-Score</th>
+                          <th className="py-2.5 px-3 text-right">Support</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-mono">
+                        {Object.entries(currentResult.classification_report)
+                          .filter(([key]) => key !== 'accuracy')
+                          .map(([key, m]) => {
+                            const isAvg = key.includes('avg')
+                            const label = currentResult.class_labels?.[key] || key
+                            return (
+                              <tr key={key} className={isAvg ? 'bg-slate-50/50 font-semibold' : 'hover:bg-slate-50'}>
+                                <td className="py-2 px-3 font-sans text-slate-800">
+                                  {isAvg ? key : `Class ${key} (${label})`}
+                                </td>
+                                <td className="py-2 px-3 text-right text-slate-700">
+                                  {m.precision != null ? (m.precision * 100).toFixed(1) + '%' : '—'}
+                                </td>
+                                <td className="py-2 px-3 text-right text-slate-700">
+                                  {m.recall != null ? (m.recall * 100).toFixed(1) + '%' : '—'}
+                                </td>
+                                <td className="py-2 px-3 text-right text-indigo-600 font-bold">
+                                  {m['f1-score'] != null ? (m['f1-score'] * 100).toFixed(1) + '%' : '—'}
+                                </td>
+                                <td className="py-2 px-3 text-right text-slate-500">
+                                  {m.support?.toLocaleString() ?? '—'}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

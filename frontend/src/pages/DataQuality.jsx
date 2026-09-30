@@ -1,8 +1,9 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useApp } from '../context/AppContext'
 import PageContainer from '../components/layout/PageContainer'
 import EmptyState from '../components/common/EmptyState'
 import StatusBadge from '../components/common/StatusBadge'
+import PreprocessingComparison from '../components/dashboard/PreprocessingComparison'
 import {
   ShieldCheckIcon,
   AlertTriangleIcon,
@@ -13,9 +14,25 @@ import {
 } from '../components/common/Icons'
 
 export default function DataQuality() {
-  const { datasetResult, edaResult, navigateTo } = useApp()
+  const {
+    datasetResult,
+    edaResult,
+    navigateTo,
+    preprocessingSession,
+    preprocessingComparison,
+    fetchPreprocessingComparison,
+    executePreprocessing,
+    executingPrep,
+    prepError
+  } = useApp()
   const [severityFilter, setSeverityFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
+
+  useEffect(() => {
+    if (!preprocessingComparison && datasetResult) {
+      fetchPreprocessingComparison()
+    }
+  }, [preprocessingComparison, datasetResult, fetchPreprocessingComparison])
 
   if (!datasetResult) {
     return (
@@ -132,6 +149,16 @@ export default function DataQuality() {
           </div>
         </div>
       )}
+
+      {/* ── Preprocessing Impact & Visual Comparison Section ── */}
+      <PreprocessingComparison
+        comparison={preprocessingComparison || preprocessingSession?.comparison}
+        session={preprocessingSession}
+        isExecuting={executingPrep}
+        onExecute={executePreprocessing}
+        error={prepError}
+        navigateTo={navigateTo}
+      />
 
       {/* Filter and Findings Catalog */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-6">

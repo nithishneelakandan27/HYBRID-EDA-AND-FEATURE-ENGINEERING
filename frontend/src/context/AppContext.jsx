@@ -82,6 +82,7 @@ export function AppProvider({ children }) {
   const [edaResult, setEdaResult] = useState(null)
   const [decisionPlan, setDecisionPlan] = useState(null)
   const [preprocessingSession, setPreprocessingSession] = useState(null)
+  const [preprocessingComparison, setPreprocessingComparison] = useState(null)
   const [evaluationResult, setEvaluationResult] = useState(null)
 
   // Sub-task loading & error states
@@ -224,7 +225,15 @@ export function AppProvider({ children }) {
 
       if (data.auto_config) {
         setAutoConfig(data.auto_config)
-        const tgt = data.auto_config.target?.column || data.auto_config.target?.detected_column || null
+        let tgt = data.auto_config.target?.column || data.auto_config.target?.detected_column || null
+        const cols = data.columns || []
+        const lateRiskCol = cols.find(c => {
+          const name = typeof c === 'string' ? c : (c.name || '')
+          return name.trim().toLowerCase() === 'late_delivery_risk'
+        })
+        if (lateRiskCol) {
+          tgt = typeof lateRiskCol === 'string' ? lateRiskCol : lateRiskCol.name
+        }
         if (tgt) {
           setEvalTargetCol(tgt)
           setModelingTargetCol(tgt)
@@ -273,6 +282,9 @@ export function AppProvider({ children }) {
 
       const data = await res.json()
       setPreprocessingSession(data)
+      if (data.comparison) {
+        setPreprocessingComparison(data.comparison)
+      }
       return data
     } catch (err) {
       setPrepError(err.message || 'Preprocessing execution failed.')
@@ -281,6 +293,22 @@ export function AppProvider({ children }) {
       setExecutingPrep(false)
     }
   }, [testSize, randomState])
+
+  const fetchPreprocessingComparison = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/preprocessing/comparison`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.has_preprocessed && data.comparison) {
+          setPreprocessingComparison(data.comparison)
+          return data.comparison
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch preprocessing comparison:', err)
+    }
+    return null
+  }, [])
 
   const downloadCleanedDataset = useCallback(async () => {
     setDownloadingCleaned(true)
@@ -454,6 +482,7 @@ export function AppProvider({ children }) {
     setEdaResult(null)
     setDecisionPlan(null)
     setPreprocessingSession(null)
+    setPreprocessingComparison(null)
     setEvaluationResult(null)
     setUploadError(null)
     setPrepError(null)
@@ -487,6 +516,8 @@ export function AppProvider({ children }) {
     edaResult,
     decisionPlan,
     preprocessingSession,
+    preprocessingComparison,
+    setPreprocessingComparison,
     evaluationResult,
     autoConfig,
 
@@ -519,6 +550,7 @@ export function AppProvider({ children }) {
     fetchEdaAnalysis,
     fetchDecisionPlan,
     executePreprocessing,
+    fetchPreprocessingComparison,
     downloadCleanedDataset,
     runEvaluation,
     fetchEvaluationSession,

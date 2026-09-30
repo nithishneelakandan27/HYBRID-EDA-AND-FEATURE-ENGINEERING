@@ -344,3 +344,50 @@ def test_25_export_cleaned_dataset_unexecuted_raises_400():
     assert res_export.status_code == 400
     assert "Cleaned dataset is unavailable" in res_export.json()["detail"]
 
+
+def test_26_preprocessing_comparison_endpoint():
+    """Verify /api/preprocessing/comparison returns empirical Before vs After statistics and histograms."""
+    csv_data = (
+        "col_num,col_cat,Late_delivery_risk,Delivery Status\n"
+        "10.0,A,1,Shipping Complete\n"
+        "20.0,B,0,Advance Shipping\n"
+        "30.0,A,1,Late delivery\n"
+        "10.0,C,0,Shipping Complete\n"
+        "1000.0,B,1,Late delivery\n"
+        ",A,0,Shipping Complete\n"
+        "20.0,,1,Late delivery\n"
+        "15.0,B,0,Shipping Complete\n"
+        "25.0,C,1,Late delivery\n"
+        "35.0,A,0,Advance Shipping\n"
+    )
+    res_upload = client.post(
+        "/api/datasets/upload",
+        files={"file": ("comp_test.csv", csv_data.encode("utf-8"), "text/csv")}
+    )
+    assert res_upload.status_code == 200
+
+    # Execute preprocessing
+    res_prep = client.post("/api/preprocessing/execute", json={"test_size": 0.20, "random_state": 42})
+    assert res_prep.status_code == 200
+    prep_data = res_prep.json()
+    assert "comparison" in prep_data
+
+    # Fetch comparison endpoint
+    res_comp = client.get("/api/preprocessing/comparison")
+    assert res_comp.status_code == 200
+    comp_json = res_comp.json()
+    assert comp_json["has_preprocessed"] is True
+    comparison = comp_json["comparison"]
+    assert "overall" in comparison
+    assert "columns" in comparison
+    assert comparison["overall"]["before"]["missing_values"] == 2
+    assert comparison["overall"]["after"]["missing_values"] == 0
+    assert "col_num" in comparison["columns"]
+    assert comparison["columns"]["col_num"]["type"] == "numeric"
+    assert "histogram" in comparison["columns"]["col_num"]
+    assert len(comparison["columns"]["col_num"]["histogram"]) > 0
+    assert "col_cat" in comparison["columns"]
+    assert comparison["columns"]["col_cat"]["type"] == "categorical"
+    assert len(comparison["columns"]["col_cat"]["categories"]) > 0
+
+
