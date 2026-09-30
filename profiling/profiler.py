@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import datetime
 from typing import Dict, Any, List, Optional
 from profiling.leakage import LeakageDetector
 
@@ -206,4 +207,61 @@ class DatasetProfiler:
     def detect_leakage(df: pd.DataFrame, target_col: Optional[str] = None) -> List[Dict[str, Any]]:
         from profiling.auto_config import AutoConfigEngine
         return AutoConfigEngine.detect_leakage(df, target_col=target_col)
+
+    @staticmethod
+    def generate_preview(df: pd.DataFrame, limit: int = 50) -> Dict[str, Any]:
+        """
+        Safely generates the first `limit` rows of the dataset formatted for JSON serialization.
+        Handles NaN, Inf, None, timestamps, numeric floats/ints, booleans, and strings.
+        """
+        num_rows = int(df.shape[0])
+        num_cols = int(df.shape[1])
+        preview_limit = min(limit, num_rows) if limit > 0 else 0
+        head_df = df.head(preview_limit)
+
+        columns = [str(c) for c in df.columns]
+        columns_metadata = []
+        for col in df.columns:
+            series = df[col]
+            is_numeric = pd.api.types.is_numeric_dtype(series)
+            inferred_type = "numeric" if is_numeric else "categorical/text"
+            columns_metadata.append({
+                "column_name": str(col),
+                "inferred_type": inferred_type,
+                "dtype": str(series.dtype)
+            })
+
+        rows = []
+        for _, row in head_df.iterrows():
+            record = {}
+            for col in df.columns:
+                val = row[col]
+                col_key = str(col)
+                if pd.isna(val) or val is None:
+                    record[col_key] = None
+                elif isinstance(val, (np.floating, float)):
+                    if np.isnan(val) or np.isinf(val):
+                        record[col_key] = None
+                    else:
+                        record[col_key] = float(val)
+                elif isinstance(val, (np.integer, int)):
+                    record[col_key] = int(val)
+                elif isinstance(val, (np.bool_, bool)):
+                    record[col_key] = bool(val)
+                elif isinstance(val, (pd.Timestamp, np.datetime64)):
+                    record[col_key] = str(val)
+                elif isinstance(val, (datetime.datetime, datetime.date)):
+                    record[col_key] = val.isoformat()
+                else:
+                    record[col_key] = str(val)
+            rows.append(record)
+
+        return {
+            "total_rows": num_rows,
+            "total_columns": num_cols,
+            "preview_row_count": len(rows),
+            "columns": columns,
+            "columns_metadata": columns_metadata,
+            "rows": rows
+        }
 

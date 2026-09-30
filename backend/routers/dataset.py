@@ -31,6 +31,7 @@ async def upload_dataset(file: UploadFile = File(...)):
             leakage_flags = DatasetProfiler.detect_leakage(df)
             from profiling.auto_config import AutoConfigEngine
             auto_config = AutoConfigEngine.generate_auto_config(df)
+            preview = DatasetProfiler.generate_preview(df, limit=50)
             return {
                 "filename": file.filename,
                 "status": "success",
@@ -38,7 +39,8 @@ async def upload_dataset(file: UploadFile = File(...)):
                 "column_profiles": profiles,
                 "target_profile": target_profile,
                 "leakage_review": leakage_flags,
-                "auto_config": auto_config
+                "auto_config": auto_config,
+                "preview": preview
             }
 
         return await run_in_threadpool(_process_dataset)
@@ -64,6 +66,19 @@ async def get_dataset_summary():
     return {
         "filename": ingestion_service.get_filename(),
         "summary": DatasetProfiler.generate_summary(df)
+    }
+
+@router.get("/preview")
+async def get_dataset_preview(limit: int = 50):
+    df = ingestion_service.get_active_dataframe()
+    if df is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No dataset currently uploaded/ingested."
+        )
+    return {
+        "filename": ingestion_service.get_filename(),
+        "preview": DatasetProfiler.generate_preview(df, limit=limit)
     }
 
 @router.get("/profiles")

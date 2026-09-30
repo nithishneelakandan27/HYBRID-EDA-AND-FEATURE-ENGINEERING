@@ -1,8 +1,9 @@
-import React, { useState } from 'react'
-import { useApp } from '../context/AppContext'
+import React, { useState, useEffect, useCallback } from 'react'
+import { useApp, API_BASE } from '../context/AppContext'
 import PageContainer from '../components/layout/PageContainer'
 import EmptyState from '../components/common/EmptyState'
 import StatusBadge from '../components/common/StatusBadge'
+import DatasetPreview from '../components/dashboard/DatasetPreview'
 import {
   SearchIcon,
   DatabaseIcon,
@@ -20,6 +21,38 @@ export default function DataOverview() {
   const [searchTerm, setSearchTerm] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [selectedColumn, setSelectedColumn] = useState(null)
+
+  // Preview Data state & loading
+  const [previewData, setPreviewData] = useState(datasetResult?.preview || null)
+  const [loadingPreview, setLoadingPreview] = useState(false)
+  const [previewError, setPreviewError] = useState(null)
+
+  const fetchPreview = useCallback(async () => {
+    setLoadingPreview(true)
+    setPreviewError(null)
+    try {
+      const res = await fetch(`${API_BASE}/api/datasets/preview?limit=50`)
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || `Failed to fetch preview (${res.status})`)
+      }
+      const data = await res.json()
+      setPreviewData(data.preview)
+    } catch (err) {
+      console.error('Preview fetch error:', err)
+      setPreviewError(err.message || 'Failed to load preview data')
+    } finally {
+      setLoadingPreview(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (datasetResult?.preview) {
+      setPreviewData(datasetResult.preview)
+    } else if (datasetResult && !previewData && !loadingPreview && !previewError) {
+      fetchPreview()
+    }
+  }, [datasetResult, previewData, loadingPreview, previewError, fetchPreview])
 
   if (!datasetResult) {
     return (
@@ -87,8 +120,27 @@ export default function DataOverview() {
         </div>
       </div>
 
-      {/* Main Table Card */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+      {/* Dataset Preview Section */}
+      <DatasetPreview
+        previewData={previewData}
+        columnProfiles={column_profiles}
+        summary={summary}
+        loading={loadingPreview}
+        error={previewError}
+        onRetry={fetchPreview}
+      />
+
+      {/* Column Intelligence Section */}
+      <div className="space-y-3">
+        <div>
+          <h3 className="text-base font-bold text-slate-900 tracking-tight">Column Intelligence</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Statistical profiles, inferred data roles, missingness ratios, and data quality flags.
+          </p>
+        </div>
+
+        {/* Main Table Card */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
         {/* Search & Filter Bar */}
         <div className="p-4 sm:p-5 border-b border-slate-200/80 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/40">
           <div className="relative w-full sm:w-72">
@@ -223,6 +275,7 @@ export default function DataOverview() {
           </table>
         </div>
       </div>
+    </div>
 
       {/* Slide-over Column Detail Drawer */}
       {selectedColumn && (

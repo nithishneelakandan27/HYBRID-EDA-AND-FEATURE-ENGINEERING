@@ -46,6 +46,24 @@ def test_valid_csv_upload_and_profiling_and_decisions():
     assert summary["num_rows"] == 7
     assert summary["num_cols"] == 4
 
+    # Check Dataset Preview in upload response
+    assert "preview" in data
+    preview = data["preview"]
+    assert preview["total_rows"] == 7
+    assert preview["total_columns"] == 4
+    assert preview["preview_row_count"] == 7
+    assert len(preview["rows"]) == 7
+    assert len(preview["columns"]) == 4
+    assert len(preview["columns_metadata"]) == 4
+
+    # Test GET /api/datasets/preview endpoint
+    prev_res = client.get("/api/datasets/preview")
+    assert prev_res.status_code == 200
+    prev_json = prev_res.json()
+    assert "preview" in prev_json
+    assert prev_json["preview"]["total_rows"] == 7
+    assert len(prev_json["preview"]["rows"]) == 7
+
     # Test GET /api/eda/analysis endpoint on uploaded dataset
     eda_res = client.get("/api/eda/analysis")
     assert eda_res.status_code == 200

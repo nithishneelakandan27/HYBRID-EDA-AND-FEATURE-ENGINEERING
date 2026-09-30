@@ -352,6 +352,20 @@ export function AppProvider({ children }) {
     }
   }, [evalTargetCol, evalLeakageCols, testSize, randomState])
 
+  const fetchEvaluationSession = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/evaluation/session`)
+      if (res.ok) {
+        const data = await res.json()
+        setEvaluationResult(data)
+        return data
+      }
+    } catch (err) {
+      // Session not available yet
+    }
+    return null
+  }, [])
+
   // ── Phase II: ML Modeling API calls ─────────────────────────────────
 
   const fetchModelConfig = useCallback(async () => {
@@ -507,6 +521,8 @@ export function AppProvider({ children }) {
     executePreprocessing,
     downloadCleanedDataset,
     runEvaluation,
+    fetchEvaluationSession,
+    setEvaluationResult,
     resetDataset,
 
     // Phase II: ML Modeling
